@@ -1,0 +1,16 @@
+[
+  {
+    "key": "workbench.panel.aichat.numberOfVisibleViews",
+    "data": 1
+  },
+  {
+    "key": "workbench.panel.composerChatViewPane",
+    "data": {
+      "workbench.panel.aichat.view": {
+        "collapsed": false,
+        "isHidden": true,
+        "size": 757
+      }
+    }
+  }
+]
