@@ -1,26 +1,48 @@
-import pandas as pd
-import json
+"""
+Module for parsing and converting Cursor chat data to various formats.
+"""
 import os
-from extractor import get_cursor_chat_path
+import json
+from typing import List, Dict, Any, Optional
+import pandas as pd
+from pathlib import Path
 
-
-WORKSPACE_PATH = get_cursor_chat_path()
-
-def parse_chat_json(file_path):
+def parse_chat_json(file_path: str) -> pd.DataFrame:
+    """
+    Parse a Cursor chat JSON file and convert it to a DataFrame.
+    
+    Args:
+        file_path: Path to the JSON file containing chat data
+        
+    Returns:
+        DataFrame containing structured chat data
+        
+    Raises:
+        FileNotFoundError: If the specified file doesn't exist
+        json.JSONDecodeError: If the file isn't valid JSON
+        KeyError: If the expected data structure isn't found
+    """
     # Read the JSON file
     with open(file_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
     
-    # Get the chat data from the specific key
-    chat_data = data[1]['data']['tabs']  # Index 1 contains the chat data
+    # Find the chat data in the JSON structure
+    chat_data = None
+    for item in data:
+        if 'data' in item and 'tabs' in item.get('data', {}):
+            chat_data = item['data']['tabs']
+            break
+    
+    if not chat_data:
+        raise KeyError("Could not find chat data in the JSON file")
     
     # List to store all bubble data
     rows = []
     
     # Iterate through each tab
     for tab in chat_data:
-        tab_id = tab['tabId']
-        chat_title = tab['chatTitle']
+        tab_id = tab.get('tabId', '')
+        chat_title = tab.get('chatTitle', 'Untitled Chat')
         
         # Iterate through bubbles
         for bubble in tab.get('bubbles', []):
@@ -34,7 +56,8 @@ def parse_chat_json(file_path):
                 'text': bubble.get('text'),
                 'rawText': bubble.get('rawText'),
                 'modelType': bubble.get('modelType'),  # This will only exist for AI responses
-                'hasCodeBlock': bubble.get('hasCodeBlock', False)  # This will only exist for AI responses
+                'hasCodeBlock': bubble.get('hasCodeBlock', False),  # This will only exist for AI responses
+                'timestamp': bubble.get('timestamp')
             }
             rows.append(row)
     
@@ -43,7 +66,8 @@ def parse_chat_json(file_path):
     
     return df
 
-def export_chats_to_markdown(chats_data, output_dir='.'):
+
+def export_chats_to_markdown(chats_data: List[Dict[str, Any]], output_dir: str = '.') -> List[str]:
     """
     Export chat data to markdown files.
     
@@ -54,8 +78,9 @@ def export_chats_to_markdown(chats_data, output_dir='.'):
     Returns:
         List of generated file paths
     """
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    output_path = Path(output_dir)
+    if not output_path.exists():
+        output_path.mkdir(parents=True, exist_ok=True)
     
     generated_files = []
     
@@ -63,7 +88,7 @@ def export_chats_to_markdown(chats_data, output_dir='.'):
         # Create filename based on chat ID
         workspace_id = os.path.basename(os.path.dirname(output_dir)) if output_dir != '.' else ''
         filename = f"chat_{workspace_id}_{chat['id']}.md"
-        filepath = os.path.join(output_dir, filename)
+        filepath = output_path / filename
         
         with open(filepath, 'w', encoding='utf-8') as f:
             # Write chat title
@@ -75,12 +100,13 @@ def export_chats_to_markdown(chats_data, output_dir='.'):
                 content = message.get('content', '')
                 f.write(f"## {role}\n\n{content}\n\n")
         
-        generated_files.append(filepath)
+        generated_files.append(str(filepath))
         print(f"Exported chat to {filepath}")
     
     return generated_files
 
-def convert_df_to_markdown(df, output_dir='.'):
+
+def convert_df_to_markdown(df: pd.DataFrame, output_dir: str = '.') -> List[str]:
     """
     Convert a DataFrame of chat messages to markdown files.
     
@@ -114,3 +140,19 @@ def convert_df_to_markdown(df, output_dir='.'):
         })
     
     return export_chats_to_markdown(chats_data, output_dir)
+
+
+def export_to_csv(df: pd.DataFrame, output_file: str) -> str:
+    """
+    Export a DataFrame to a CSV file.
+    
+    Args:
+        df: DataFrame to export
+        output_file: Path to the output CSV file
+        
+    Returns:
+        Path to the created CSV file
+    """
+    df.to_csv(output_file, index=False)
+    print(f"Exported data to {output_file}")
+    return output_file 

@@ -1,12 +1,26 @@
+"""
+Module for extracting chat data from Cursor's SQLite database.
+"""
 import os
 import json
 import platform
 import sqlite3
+from pathlib import Path
+from typing import List, Dict, Optional, Any
 
-def get_cursor_chat_path():
-    """Get the path to Cursor chat data based on the operating system."""
+
+def get_cursor_chat_path() -> str:
+    """
+    Get the path to Cursor chat data based on the operating system.
+    
+    Returns:
+        str: Path to Cursor workspace storage directory
+        
+    Raises:
+        OSError: If running on an unsupported operating system
+    """
     system = platform.system()
-    home = os.path.expanduser('~')
+    home = Path.home()
     
     if system == 'Linux' and os.path.exists('/proc/version'):
         # Check if running in WSL
@@ -18,19 +32,29 @@ def get_cursor_chat_path():
                 wsl_path = os.popen(f'wslpath "{windows_home}"').read().strip()
                 windows_cursor_path = os.path.join(windows_home, 'AppData', 'Roaming', 'Cursor', 'User', 'workspaceStorage')
                 return os.popen(f'wslpath "{windows_cursor_path}"').read().strip()
-    
-    if system == 'Windows':
+    elif system == 'Windows':
         return os.path.join(home, 'AppData', 'Roaming', 'Cursor', 'User', 'workspaceStorage')
+    elif system == 'Darwin':  # macOS
+        return os.path.join(home, 'Library', 'Application Support', 'Cursor', 'User', 'workspaceStorage')
     else:
         raise OSError(f"Unsupported operating system: {system}")
 
-def read_sqlite_db(db_path):
-    """Read and extract chat data from the SQLite database."""
+
+def read_sqlite_db(db_path: str) -> Optional[List[Dict[str, Any]]]:
+    """
+    Read and extract chat data from the SQLite database.
+    
+    Args:
+        db_path: Path to SQLite database file
+        
+    Returns:
+        List of dictionaries containing chat data or None if extraction failed
+    """
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        # First, let's see what tables exist
+        # First, check what tables exist
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
         tables = cursor.fetchall()
         print(f"\nTables in database: {[table[0] for table in tables]}")
@@ -59,22 +83,41 @@ def read_sqlite_db(db_path):
         print(f"SQLite error: {str(e)}")
         return None
 
-def get_project_name(workspace_path):
-    """Get the project name from the workspace.json file."""
-    with open(workspace_path, 'r', encoding='utf-8') as f:
-        workspace_data = json.load(f)
-        return workspace_data.get('folder', '')
 
-def analyze_workspace(workspace_path):
-    """Analyze the contents of a workspace folder."""
+def get_project_name(workspace_path: str) -> str:
+    """
+    Get the project name from the workspace.json file.
+    
+    Args:
+        workspace_path: Path to workspace.json file
+        
+    Returns:
+        Project name or empty string if not found
+    """
+    try:
+        with open(workspace_path, 'r', encoding='utf-8') as f:
+            workspace_data = json.load(f)
+            return workspace_data.get('folder', '')
+    except (json.JSONDecodeError, FileNotFoundError) as e:
+        print(f"Error reading workspace.json: {str(e)}")
+        return ""
+
+
+def analyze_workspace(workspace_path: str) -> None:
+    """
+    Analyze the contents of a workspace folder and extract chat data.
+    
+    Args:
+        workspace_path: Path to the workspace folder
+    """
     print(f"\nAnalyzing workspace: {os.path.basename(workspace_path)}")
     
     # Look specifically for state.vscdb files
     for root, dirs, files in os.walk(workspace_path):
         if 'workspace.json' in files:
-            workspace_path = os.path.join(root, 'workspace.json')
-            print(f"Found workspace.json at: {os.path.relpath(workspace_path, workspace_path)}")
-            project_name = get_project_name(workspace_path)
+            workspace_json_path = os.path.join(root, 'workspace.json')
+            print(f"Found workspace.json at: {os.path.relpath(workspace_json_path, workspace_path)}")
+            project_name = get_project_name(workspace_json_path)
             print(f"Project name: {project_name}")
         
         if 'state.vscdb' in files:
@@ -91,13 +134,20 @@ def analyze_workspace(workspace_path):
                     json.dump(chat_data, f, indent=2)
                 print(f"Saved chat data to {output_file}")
 
-def extract_chats():
-    """Extract and analyze chat data from Cursor workspaces."""
+
+def extract_chats() -> List[str]:
+    """
+    Extract and analyze chat data from Cursor workspaces.
+    
+    Returns:
+        List of paths to extracted JSON files
+    """
     base_path = get_cursor_chat_path()
+    extracted_files = []
     
     if not os.path.exists(base_path):
         print(f"Workspace directory not found at: {base_path}")
-        return
+        return extracted_files
     
     print(f"Found Cursor workspace directory at: {base_path}")
     
@@ -106,10 +156,15 @@ def extract_chats():
     
     if not workspaces:
         print("No workspace folders found")
-        return
+        return extracted_files
     
     print(f"Found {len(workspaces)} workspace folders")
     
     for workspace in workspaces:
         workspace_path = os.path.join(base_path, workspace)
         analyze_workspace(workspace_path)
+        output_file = f"chat_data_{workspace}.json"
+        if os.path.exists(output_file):
+            extracted_files.append(output_file)
+    
+    return extracted_files 
