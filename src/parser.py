@@ -32,8 +32,9 @@ def parse_chat_json(file_path: str) -> pd.DataFrame:
     # Find the chat data in the JSON structure
     chat_data = None
     for item in data:
-        if 'data' in item and 'tabs' in item.get('data', {}):
-            chat_data = item['data']['tabs']
+        item_data = item.get('data')
+        if isinstance(item_data, dict) and 'tabs' in item_data:
+            chat_data = item_data['tabs']
             break
     
     if chat_data is None:
