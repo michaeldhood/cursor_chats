@@ -29,8 +29,8 @@ Add `--verbose` to any command to see detailed logging output.
 To extract chat data from your Cursor installation:
 
 ```bash
-python main.py --extract
-python main.py --extract --verbose  # detailed logging
+python -m src extract
+python -m src extract --verbose  # detailed logging
 ```
 
 This will create JSON files containing your chat data.
@@ -40,7 +40,7 @@ This will create JSON files containing your chat data.
 To convert an extracted JSON file to CSV format:
 
 ```bash
-python main.py --convert chat_data_[hash].json
+python -m src convert chat_data_[hash].json
 ```
 
 ### Converting to Markdown
@@ -48,7 +48,7 @@ python main.py --convert chat_data_[hash].json
 To convert an extracted JSON file to Markdown format:
 
 ```bash
-python main.py --to-markdown chat_data_[hash].json --output-dir markdown_chats
+python -m src convert chat_data_[hash].json --format markdown --output-dir markdown_chats
 ```
 
 ### Viewing Chat Files
@@ -56,8 +56,8 @@ python main.py --to-markdown chat_data_[hash].json --output-dir markdown_chats
 To browse and view your chat files:
 
 ```bash
-python view_chats.py                   # List all chat files
-python view_chats.py chat_filename.md  # View a specific chat file
+python -m src view                   # List all chat files
+python -m src view chat_filename.md  # View a specific chat file
 ```
 
 ## File Naming Convention
