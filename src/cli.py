@@ -4,12 +4,15 @@ Command-line interface for Cursor Chat Extractor.
 import os
 import sys
 import argparse
+import logging
 from pathlib import Path
 from typing import List, Optional
 
 from src.extractor import extract_chats, get_cursor_chat_path
 from src.parser import parse_chat_json, convert_df_to_markdown, export_to_csv
 from src.viewer import list_chat_files, find_chat_file, display_chat_file
+
+logger = logging.getLogger(__name__)
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -23,6 +26,8 @@ def create_parser() -> argparse.ArgumentParser:
         description='Cursor Chat Extractor - Tools for working with Cursor AI chat logs',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
+
+    parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output')
     
     # Add subparsers for different commands
     subparsers = parser.add_subparsers(dest='command', help='Command to execute')
@@ -60,13 +65,13 @@ def extract_command() -> int:
     Returns:
         Exit code (0 for success, non-zero for error)
     """
-    print("Extracting chats from Cursor database...")
+    logger.info("Extracting chats from Cursor database...")
     extracted_files = extract_chats()
     if extracted_files:
-        print(f"Extraction completed. {len(extracted_files)} files extracted.")
+        logger.info("Extraction completed. %d files extracted.", len(extracted_files))
         return 0
     else:
-        print("No chat files were extracted.")
+        logger.info("No chat files were extracted.")
         return 1
 
 
@@ -81,27 +86,27 @@ def convert_command(args: argparse.Namespace) -> int:
         Exit code (0 for success, non-zero for error)
     """
     if not os.path.exists(args.file):
-        print(f"Error: File {args.file} not found")
+        logger.error("Error: File %s not found", args.file)
         return 1
     
     try:
-        print(f"Parsing {args.file}...")
+        logger.info("Parsing %s...", args.file)
         df = parse_chat_json(args.file)
         
         if args.format == 'csv':
             output_file = os.path.splitext(args.file)[0] + ".csv"
             export_to_csv(df, output_file)
-            print(f"Conversion completed. Output saved to {output_file}")
+            logger.info("Conversion completed. Output saved to %s", output_file)
         elif args.format == 'markdown':
             if not os.path.exists(args.output_dir):
                 os.makedirs(args.output_dir)
             
             files = convert_df_to_markdown(df, args.output_dir)
-            print(f"Conversion completed. {len(files)} markdown files created in {args.output_dir}")
+            logger.info("Conversion completed. %d markdown files created in %s", len(files), args.output_dir)
         
         return 0
     except Exception as e:
-        print(f"Error converting file: {str(e)}")
+        logger.error("Error converting file: %s", str(e))
         return 1
 
 
@@ -138,7 +143,7 @@ def view_command(args: argparse.Namespace) -> int:
         if display_chat_file(filepath):
             return 0
     else:
-        print(f"File not found: {args.file}")
+        logger.error("File not found: %s", args.file)
         list_chat_files()
     return 1
 
@@ -151,9 +156,9 @@ def info_command() -> int:
         Exit code (0 for success, non-zero for error)
     """
     cursor_path = get_cursor_chat_path()
-    print(f"Cursor chat path: {cursor_path}")
-    print(f"Python: {sys.version}")
-    print(f"Platform: {sys.platform}")
+    logger.info("Cursor chat path: %s", cursor_path)
+    logger.info("Python: %s", sys.version)
+    logger.info("Platform: %s", sys.platform)
     return 0
 
 
@@ -166,6 +171,9 @@ def main() -> int:
     """
     parser = create_parser()
     args = parser.parse_args()
+
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
+                        format='%(message)s')
     
     if args.command == 'extract':
         return extract_command()
@@ -184,4 +192,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main()) 
+    sys.exit(main())

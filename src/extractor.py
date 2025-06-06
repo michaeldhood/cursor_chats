@@ -7,6 +7,9 @@ import platform
 import sqlite3
 from pathlib import Path
 from typing import List, Dict, Optional, Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def get_cursor_chat_path() -> str:
@@ -57,7 +60,7 @@ def read_sqlite_db(db_path: str) -> Optional[List[Dict[str, Any]]]:
         # First, check what tables exist
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
         tables = cursor.fetchall()
-        print(f"\nTables in database: {[table[0] for table in tables]}")
+        logger.debug("Tables in database: %s", [table[0] for table in tables])
         
         # Try to find chat-related data in the ItemTable
         cursor.execute("SELECT key, value FROM ItemTable WHERE key LIKE '%chat%' OR key LIKE '%conversation%';")
@@ -72,15 +75,15 @@ def read_sqlite_db(db_path: str) -> Optional[List[Dict[str, Any]]]:
                     'key': key,
                     'data': parsed_value
                 })
-                print(f"Found chat data with key: {key}")
+                logger.debug("Found chat data with key: %s", key)
             except json.JSONDecodeError:
-                print(f"Non-JSON data found for key: {key}")
+                logger.debug("Non-JSON data found for key: %s", key)
         
         conn.close()
         return chat_data
         
     except sqlite3.Error as e:
-        print(f"SQLite error: {str(e)}")
+        logger.error("SQLite error: %s", str(e))
         return None
 
 
@@ -99,7 +102,7 @@ def get_project_name(workspace_path: str) -> str:
             workspace_data = json.load(f)
             return workspace_data.get('folder', '')
     except (json.JSONDecodeError, FileNotFoundError) as e:
-        print(f"Error reading workspace.json: {str(e)}")
+        logger.error("Error reading workspace.json: %s", str(e))
         return ""
 
 
@@ -110,19 +113,19 @@ def analyze_workspace(workspace_path: str) -> None:
     Args:
         workspace_path: Path to the workspace folder
     """
-    print(f"\nAnalyzing workspace: {os.path.basename(workspace_path)}")
+    logger.info("\nAnalyzing workspace: %s", os.path.basename(workspace_path))
     
     # Look specifically for state.vscdb files
     for root, dirs, files in os.walk(workspace_path):
         if 'workspace.json' in files:
             workspace_json_path = os.path.join(root, 'workspace.json')
-            print(f"Found workspace.json at: {os.path.relpath(workspace_json_path, workspace_path)}")
+            logger.info("Found workspace.json at: %s", os.path.relpath(workspace_json_path, workspace_path))
             project_name = get_project_name(workspace_json_path)
-            print(f"Project name: {project_name}")
+            logger.info("Project name: %s", project_name)
         
         if 'state.vscdb' in files:
             db_path = os.path.join(root, 'state.vscdb')
-            print(f"Found state.vscdb at: {os.path.relpath(db_path, workspace_path)}")
+            logger.info("Found state.vscdb at: %s", os.path.relpath(db_path, workspace_path))
             
             # Read and analyze the database
             chat_data = read_sqlite_db(db_path)
@@ -132,7 +135,7 @@ def analyze_workspace(workspace_path: str) -> None:
                 output_file = f"chat_data_{os.path.basename(workspace_path)}.json"
                 with open(output_file, 'w', encoding='utf-8') as f:
                     json.dump(chat_data, f, indent=2)
-                print(f"Saved chat data to {output_file}")
+                logger.info("Saved chat data to %s", output_file)
 
 
 def extract_chats() -> List[str]:
@@ -146,19 +149,19 @@ def extract_chats() -> List[str]:
     extracted_files = []
     
     if not os.path.exists(base_path):
-        print(f"Workspace directory not found at: {base_path}")
+        logger.error("Workspace directory not found at: %s", base_path)
         return extracted_files
-    
-    print(f"Found Cursor workspace directory at: {base_path}")
+
+    logger.info("Found Cursor workspace directory at: %s", base_path)
     
     # Analyze each workspace folder
     workspaces = [d for d in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, d))]
     
     if not workspaces:
-        print("No workspace folders found")
+        logger.info("No workspace folders found")
         return extracted_files
-    
-    print(f"Found {len(workspaces)} workspace folders")
+
+    logger.info("Found %d workspace folders", len(workspaces))
     
     for workspace in workspaces:
         workspace_path = os.path.join(base_path, workspace)

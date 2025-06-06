@@ -22,12 +22,15 @@ This project provides utilities to extract chat data from Cursor's SQLite databa
 
 ## Usage
 
+Add `--verbose` to any command to see detailed logging output.
+
 ### Extracting Chat Data
 
 To extract chat data from your Cursor installation:
 
 ```bash
 python main.py --extract
+python main.py --extract --verbose  # detailed logging
 ```
 
 This will create JSON files containing your chat data.
