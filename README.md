@@ -48,6 +48,14 @@ To convert an extracted JSON file to Markdown format:
 python main.py --to-markdown chat_data_[hash].json --output-dir markdown_chats
 ```
 
+### Batch Conversion
+
+To convert all JSON files in the current directory at once:
+
+```bash
+python main.py --convert --all --format markdown --output-dir markdown_chats
+```
+
 ### Viewing Chat Files
 
 To browse and view your chat files:

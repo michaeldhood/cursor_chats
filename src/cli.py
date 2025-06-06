@@ -32,7 +32,9 @@ def create_parser() -> argparse.ArgumentParser:
     
     # Convert command
     convert_parser = subparsers.add_parser('convert', help='Convert chat data to different formats')
-    convert_parser.add_argument('file', help='JSON file to convert')
+    convert_parser.add_argument('file', nargs='?', help='JSON file to convert (ignored with --all)')
+    convert_parser.add_argument('--all', action='store_true',
+                               help='Convert all JSON files in the current directory')
     convert_parser.add_argument('--format', choices=['csv', 'markdown'], default='csv',
                                help='Output format (default: csv)')
     convert_parser.add_argument('--output-dir', default='chat_exports',
@@ -80,25 +82,36 @@ def convert_command(args: argparse.Namespace) -> int:
     Returns:
         Exit code (0 for success, non-zero for error)
     """
-    if not os.path.exists(args.file):
-        print(f"Error: File {args.file} not found")
-        return 1
-    
+    if args.all:
+        json_files = [f for f in os.listdir('.') if f.endswith('.json')]
+        if not json_files:
+            print("No JSON files found to convert.")
+            return 1
+    else:
+        if not args.file:
+            print("Error: Please specify a file or use --all")
+            return 1
+        if not os.path.exists(args.file):
+            print(f"Error: File {args.file} not found")
+            return 1
+        json_files = [args.file]
+
     try:
-        print(f"Parsing {args.file}...")
-        df = parse_chat_json(args.file)
-        
-        if args.format == 'csv':
-            output_file = os.path.splitext(args.file)[0] + ".csv"
-            export_to_csv(df, output_file)
-            print(f"Conversion completed. Output saved to {output_file}")
-        elif args.format == 'markdown':
-            if not os.path.exists(args.output_dir):
-                os.makedirs(args.output_dir)
-            
-            files = convert_df_to_markdown(df, args.output_dir)
-            print(f"Conversion completed. {len(files)} markdown files created in {args.output_dir}")
-        
+        for json_file in json_files:
+            print(f"Parsing {json_file}...")
+            df = parse_chat_json(json_file)
+
+            if args.format == 'csv':
+                output_file = os.path.splitext(json_file)[0] + ".csv"
+                export_to_csv(df, output_file)
+                print(f"Conversion completed. Output saved to {output_file}")
+            elif args.format == 'markdown':
+                if not os.path.exists(args.output_dir):
+                    os.makedirs(args.output_dir)
+
+                files = convert_df_to_markdown(df, args.output_dir)
+                print(f"Conversion completed. {len(files)} markdown files created in {args.output_dir}")
+
         return 0
     except Exception as e:
         print(f"Error converting file: {str(e)}")
