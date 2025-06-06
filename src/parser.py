@@ -33,7 +33,7 @@ def parse_chat_json(file_path: str) -> pd.DataFrame:
             chat_data = item['data']['tabs']
             break
     
-    if not chat_data:
+    if chat_data is None:
         raise KeyError("Could not find chat data in the JSON file")
     
     # List to store all bubble data
@@ -86,7 +86,7 @@ def export_chats_to_markdown(chats_data: List[Dict[str, Any]], output_dir: str =
     
     for chat in chats_data:
         # Create filename based on chat ID
-        workspace_id = os.path.basename(os.path.dirname(output_dir)) if output_dir != '.' else ''
+        workspace_id = Path(output_dir).name if output_dir != '.' else ''
         filename = f"chat_{workspace_id}_{chat['id']}.md"
         filepath = output_path / filename
         
