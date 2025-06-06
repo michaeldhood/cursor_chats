@@ -6,6 +6,9 @@ import json
 from typing import List, Dict, Any, Optional
 import pandas as pd
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 def parse_chat_json(file_path: str) -> pd.DataFrame:
     """
@@ -101,7 +104,7 @@ def export_chats_to_markdown(chats_data: List[Dict[str, Any]], output_dir: str =
                 f.write(f"## {role}\n\n{content}\n\n")
         
         generated_files.append(str(filepath))
-        print(f"Exported chat to {filepath}")
+        logger.info("Exported chat to %s", filepath)
     
     return generated_files
 
@@ -154,5 +157,5 @@ def export_to_csv(df: pd.DataFrame, output_file: str) -> str:
         Path to the created CSV file
     """
     df.to_csv(output_file, index=False)
-    print(f"Exported data to {output_file}")
-    return output_file 
+    logger.info("Exported data to %s", output_file)
+    return output_file

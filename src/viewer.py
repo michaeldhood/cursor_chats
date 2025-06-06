@@ -5,6 +5,9 @@ import os
 import re
 from pathlib import Path
 from typing import List, Dict, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def find_chat_files(directories: List[str] = None) -> List[str]:
@@ -68,7 +71,7 @@ def list_chat_files(directories: List[str] = None) -> Dict[str, List[str]]:
     all_files = find_chat_files(directories)
     
     if not all_files:
-        print("No chat files found in the specified directories.")
+        logger.info("No chat files found in the specified directories.")
         return {}
     
     # Group files by hash
@@ -76,7 +79,7 @@ def list_chat_files(directories: List[str] = None) -> Dict[str, List[str]]:
     
     # Print chat groups
     for i, (hash_val, group_files) in enumerate(chat_groups.items()):
-        print(f"{i+1}. Group {hash_val[:8]}... ({len(group_files)} files)")
+        logger.info("%d. Group %s... (%d files)", i + 1, hash_val[:8], len(group_files))
         
         # Identify parent files
         parent_files = [f for f in group_files if re.match(r'.*chat_[a-f0-9]+\.md$', f)]
@@ -84,12 +87,12 @@ def list_chat_files(directories: List[str] = None) -> Dict[str, List[str]]:
         
         # Print parent files first
         for parent_file in parent_files:
-            print(f"   - {parent_file} (Parent)")
+            logger.info("   - %s (Parent)", parent_file)
         
         # Then print child files
         for j, file in enumerate(sorted(other_files)):
-            print(f"   {j+1}. {file}")
-        print()
+            logger.info("   %d. %s", j + 1, file)
+        logger.info("")
     
     return chat_groups
 
@@ -109,7 +112,7 @@ def view_chat_file(filepath: str) -> Optional[str]:
             content = f.read()
             return content
     except Exception as e:
-        print(f"Error reading file {filepath}: {e}")
+        logger.error("Error reading file %s: %s", filepath, e)
         return None
 
 
@@ -125,8 +128,8 @@ def display_chat_file(filepath: str) -> bool:
     """
     content = view_chat_file(filepath)
     if content:
-        print(f"\n{'='*80}\n{filepath}\n{'='*80}\n")
-        print(content)
+        logger.info("\n%s\n%s\n%s\n", '=' * 80, filepath, '=' * 80)
+        logger.info(content)
         return True
     return False
 
