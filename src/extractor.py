@@ -53,6 +53,7 @@ def read_sqlite_db(db_path: str) -> Optional[List[Dict[str, Any]]]:
     Returns:
         List of dictionaries containing chat data or None if extraction failed
     """
+    conn = None
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
@@ -79,12 +80,15 @@ def read_sqlite_db(db_path: str) -> Optional[List[Dict[str, Any]]]:
             except json.JSONDecodeError:
                 logger.debug("Non-JSON data found for key: %s", key)
         
-        conn.close()
         return chat_data
-        
+
     except sqlite3.Error as e:
         logger.error("SQLite error: %s", str(e))
         return None
+
+    finally:
+        if conn:
+            conn.close()
 
 
 def get_project_name(workspace_path: str) -> str:
