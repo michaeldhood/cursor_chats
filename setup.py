@@ -1,6 +1,7 @@
 """
 Setup script for the cursor_chats package.
 """
+
 from setuptools import setup, find_packages
 
 setup(
@@ -13,6 +14,8 @@ setup(
     packages=find_packages(),
     install_requires=[
         "pandas>=1.0.0",
+        "colorama>=0.4.0",
+        "pyyaml>=5.0.0",
     ],
     python_requires=">=3.7",
     entry_points={
@@ -29,4 +32,4 @@ setup(
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
     ],
-) 
+)
