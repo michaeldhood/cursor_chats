@@ -26,7 +26,7 @@ To create a new project:
 
 1. Ask your AI assistant to create a project using Task Magic
 2. Provide a descriptive kebab-case name (e.g., `user-authentication`, `data-pipeline`)
-3. The system will create the full structure and register it in `.ai/INDEX.md`
+3. The system will create the full structure and register it in `_parallel/INDEX.md`
 
 ## Project Lifecycle
 
@@ -37,7 +37,7 @@ To create a new project:
 
 ## Navigation
 
-- Check `.ai/INDEX.md` for the global project registry
+- Check `_parallel/INDEX.md` for the global project registry
 - Use Task Magic commands to switch between projects
 - Reference other projects by name when needed
 

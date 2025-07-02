@@ -27,7 +27,7 @@ _No archived projects yet._
 ## System Structure
 
 ```
-.ai/
+_parallel/
   projects/           # Individual project workspaces
   memory/             # Global archive of completed work
   handoffs/           # Context transfer between AI sessions

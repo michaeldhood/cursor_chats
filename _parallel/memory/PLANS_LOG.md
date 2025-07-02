@@ -7,12 +7,12 @@ This file maintains a chronological log of all plans (PRDs) that have been archi
 Each archived plan is logged with the following format:
 
 ```
-- **Archived Plan:** `.ai/memory/plans/{archived-filename}.md`
+- **Archived Plan:** `_parallel/memory/plans/{archived-filename}.md`
   - **Archived On:** YYYY-MM-DDTHH:MM:SSZ
   - **Project:** {project-name}
   - **Reason:** {Completed/Deprecated/Superseded}
   - **Title:** {Plan Title}
-  - **Original File:** `.ai/projects/{project}/plan.md` (or original path)
+  - **Original File:** `_parallel/projects/{project}/plan.md` (or original path)
 ```
 
 ## Archive History
