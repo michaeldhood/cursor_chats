@@ -11,6 +11,7 @@ from typing import List, Optional
 from src.extractor import extract_chats, get_cursor_chat_path
 from src.parser import parse_chat_json, convert_df_to_markdown, export_to_csv
 from src.viewer import list_chat_files, find_chat_file, display_chat_file
+from src.journal import generate_journal, export_journal, list_templates, get_default_templates
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,20 @@ def create_parser() -> argparse.ArgumentParser:
     
     # Info command
     info_parser = subparsers.add_parser('info', help='Show information about Cursor installation')
+    
+    # Journal command
+    journal_parser = subparsers.add_parser('journal', help='Generate structured journals from chat data')
+    journal_parser.add_argument('file', help='JSON file containing chat data')
+    journal_parser.add_argument('--tab-id', help='Specific tab ID to generate journal for (if not provided, will list available tabs)')
+    journal_parser.add_argument('--template', default='decision_journal', 
+                               help='Template to use (default: decision_journal). Use --list-templates to see available templates')
+    journal_parser.add_argument('--output', help='Output file path (default: auto-generated based on chat title)')
+    journal_parser.add_argument('--format', choices=['markdown', 'html', 'json'], default='markdown',
+                               help='Output format (default: markdown)')
+    journal_parser.add_argument('--list-templates', action='store_true', 
+                               help='List available journal templates and exit')
+    journal_parser.add_argument('--no-auto-fill', action='store_true',
+                               help='Disable automatic content extraction')
     
     return parser
 
@@ -162,6 +177,83 @@ def info_command() -> int:
     return 0
 
 
+def journal_command(args: argparse.Namespace) -> int:
+    """
+    Handle the journal command.
+    
+    Args:
+        args: Command line arguments
+        
+    Returns:
+        Exit code (0 for success, non-zero for error)
+    """
+    # List templates if requested
+    if args.list_templates:
+        logger.info("Available journal templates:")
+        templates = get_default_templates()
+        for template in templates:
+            logger.info("  %s - %s", template.name, template.metadata.get('description', 'No description'))
+            use_cases = template.metadata.get('use_cases', [])
+            if use_cases:
+                logger.info("    Use cases: %s", ', '.join(use_cases))
+        return 0
+    
+    if not os.path.exists(args.file):
+        logger.error("Error: File %s not found", args.file)
+        return 1
+    
+    try:
+        # Parse the chat data
+        logger.info("Parsing %s...", args.file)
+        df = parse_chat_json(args.file)
+        
+        # If no tab-id provided, list available tabs
+        if not args.tab_id:
+            tabs = df[['tabId', 'chatTitle']].drop_duplicates()
+            logger.info("Available chat tabs:")
+            for _, row in tabs.iterrows():
+                logger.info("  %s - %s", row['tabId'], row['chatTitle'])
+            logger.info("")
+            logger.info("Use --tab-id <tab_id> to generate a journal for a specific tab")
+            return 0
+        
+        # Generate journal
+        logger.info("Generating journal for tab %s using template '%s'...", args.tab_id, args.template)
+        journal = generate_journal(
+            df=df,
+            tab_id=args.tab_id,
+            template=args.template,
+            auto_fill=not args.no_auto_fill
+        )
+        
+        # Determine output path
+        if args.output:
+            output_path = args.output
+        else:
+            # Auto-generate filename
+            safe_title = "".join(c for c in journal.title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            safe_title = safe_title.replace(' ', '_')[:50]  # Limit length
+            extension = 'md' if args.format == 'markdown' else args.format
+            output_path = f"journal_{args.tab_id}_{safe_title}.{extension}"
+        
+        # Export journal
+        final_path = export_journal(journal, output_path, args.format)
+        logger.info("Journal exported to: %s", final_path)
+        
+        # Show brief summary
+        logger.info("\nJournal Summary:")
+        logger.info("  Title: %s", journal.title)
+        logger.info("  Template: %s", journal.template_name)
+        logger.info("  Sections: %d", len(journal.sections))
+        logger.info("  Format: %s", args.format)
+        
+        return 0
+        
+    except Exception as e:
+        logger.error("Error generating journal: %s", str(e))
+        return 1
+
+
 def main() -> int:
     """
     Main entry point for the CLI.
@@ -185,6 +277,8 @@ def main() -> int:
         return view_command(args)
     elif args.command == 'info':
         return info_command()
+    elif args.command == 'journal':
+        return journal_command(args)
     else:
         # No command specified, show help
         parser.print_help()
