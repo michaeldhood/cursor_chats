@@ -1,14 +1,14 @@
 ---
 id: 5
 title: "Journal Generation Templates"
-status: pending
+status: completed
 priority: medium
 feature: Foundation
 dependencies: [3, 4]
 assigned_agent: null
 created_at: "2025-06-07T23:17:22Z"
-started_at: null
-completed_at: null
+started_at: "2025-07-05T06:08:53Z"
+completed_at: "2025-07-05T06:08:53Z"
 error_log: null
 ---
 

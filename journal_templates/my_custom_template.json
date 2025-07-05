@@ -1,0 +1,13 @@
+{
+  "name": "my_custom_template",
+  "sections": [
+    {
+      "title": "## Custom",
+      "prompt": "Custom prompt"
+    }
+  ],
+  "metadata": {
+    "description": "Custom template"
+  },
+  "created_at": "2025-07-04T23:06:18.576495"
+}

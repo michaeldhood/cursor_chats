@@ -4,6 +4,7 @@ Command-line interface for Cursor Chat Extractor.
 import os
 import sys
 import argparse
+import json
 import logging
 from pathlib import Path
 from typing import List, Optional
@@ -12,6 +13,7 @@ from src.extractor import extract_chats, get_cursor_chat_path
 from src.parser import parse_chat_json, convert_df_to_markdown, export_to_csv
 from src.viewer import list_chat_files, find_chat_file, display_chat_file
 from src.tagger import TagManager
+from src.journal import JournalGenerator, generate_journal_from_file
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +123,36 @@ def create_parser() -> argparse.ArgumentParser:
                              help='Output directory (default: chat_exports)')
     batch_parser.add_argument('--tags-file', default='chat_tags.json',
                              help='File to store tags (default: chat_tags.json)')
+    
+    # Journal command
+    journal_parser = subparsers.add_parser('journal', help='Generate structured journals from chats')
+    journal_subparsers = journal_parser.add_subparsers(dest='journal_command', help='Journal operation')
+    
+    # Journal generate subcommand
+    journal_generate_parser = journal_subparsers.add_parser('generate', help='Generate journal from chat file')
+    journal_generate_parser.add_argument('file', help='JSON file to generate journal from')
+    journal_generate_parser.add_argument('--template', default='project_journal',
+                                        help='Template to use (default: project_journal)')
+    journal_generate_parser.add_argument('--format', choices=['markdown', 'html', 'json'], default='markdown',
+                                        help='Output format (default: markdown)')
+    journal_generate_parser.add_argument('--output', '-o', help='Output file path')
+    journal_generate_parser.add_argument('--annotations', help='JSON file with manual annotations')
+    
+    # Journal template subcommands
+    journal_template_parser = journal_subparsers.add_parser('template', help='Manage journal templates')
+    journal_template_subparsers = journal_template_parser.add_subparsers(dest='template_command', help='Template operation')
+    
+    # Template list
+    journal_template_list_parser = journal_template_subparsers.add_parser('list', help='List available templates')
+    
+    # Template show
+    journal_template_show_parser = journal_template_subparsers.add_parser('show', help='Show template details')
+    journal_template_show_parser.add_argument('name', help='Template name to show')
+    
+    # Template create
+    journal_template_create_parser = journal_template_subparsers.add_parser('create', help='Create custom template')
+    journal_template_create_parser.add_argument('name', help='Template name')
+    journal_template_create_parser.add_argument('--from-file', help='Create from JSON file')
     
     return parser
 
@@ -492,6 +524,138 @@ def batch_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def journal_command(args: argparse.Namespace) -> int:
+    """
+    Handle the journal command and its subcommands.
+    
+    Args:
+        args: Command line arguments
+        
+    Returns:
+        Exit code (0 for success, non-zero for error)
+    """
+    if args.journal_command == 'generate':
+        return journal_generate_command(args)
+    elif args.journal_command == 'template':
+        return journal_template_command(args)
+    else:
+        logger.error("Please specify a journal subcommand (generate, template)")
+        return 1
+
+
+def journal_generate_command(args: argparse.Namespace) -> int:
+    """Handle journal generate command."""
+    if not os.path.exists(args.file):
+        logger.error("File not found: %s", args.file)
+        return 1
+    
+    try:
+        # Load annotations if provided
+        annotations = None
+        if args.annotations:
+            if os.path.exists(args.annotations):
+                with open(args.annotations, 'r') as f:
+                    annotations = json.load(f)
+            else:
+                logger.warning("Annotations file not found: %s", args.annotations)
+        
+        # Generate journal
+        logger.info("Generating journal from %s using template '%s'...", args.file, args.template)
+        journal_result = generate_journal_from_file(
+            args.file, 
+            args.template, 
+            annotations, 
+            args.format
+        )
+        
+        # Determine output file
+        if args.output:
+            output_file = args.output
+        else:
+            basename = os.path.splitext(os.path.basename(args.file))[0]
+            ext = 'md' if args.format == 'markdown' else args.format
+            output_file = f"journal_{basename}.{ext}"
+        
+        # Write journal to file
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(journal_result['content'])
+        
+        logger.info("Journal generated successfully: %s", output_file)
+        logger.info("Template: %s", journal_result['metadata']['template'])
+        logger.info("Source chats: %s", journal_result['metadata']['source_chats'])
+        
+        return 0
+        
+    except Exception as e:
+        logger.error("Error generating journal: %s", str(e))
+        return 1
+
+
+def journal_template_command(args: argparse.Namespace) -> int:
+    """Handle journal template subcommands."""
+    generator = JournalGenerator()
+    
+    if args.template_command == 'list':
+        templates = generator.list_templates()
+        if templates:
+            logger.info("Available templates:")
+            for template_name in sorted(templates):
+                template = generator.get_template(template_name)
+                description = template.metadata.get('description', 'No description')
+                logger.info("  %s - %s", template_name, description)
+        else:
+            logger.info("No templates found.")
+        return 0
+        
+    elif args.template_command == 'show':
+        template = generator.get_template(args.name)
+        if not template:
+            logger.error("Template not found: %s", args.name)
+            return 1
+        
+        logger.info("\nTemplate: %s", template.name)
+        logger.info("Description: %s", template.metadata.get('description', 'No description'))
+        logger.info("Use case: %s", template.metadata.get('use_case', 'General'))
+        logger.info("Sections:")
+        
+        for i, section in enumerate(template.sections, 1):
+            logger.info("  %d. %s", i, section['title'].replace('#', '').strip())
+            logger.info("     %s", section['prompt'])
+        
+        return 0
+        
+    elif args.template_command == 'create':
+        if args.from_file:
+            if not os.path.exists(args.from_file):
+                logger.error("Template file not found: %s", args.from_file)
+                return 1
+            
+            try:
+                with open(args.from_file, 'r') as f:
+                    template_data = json.load(f)
+                
+                template = generator.create_custom_template(
+                    args.name,
+                    template_data['sections'],
+                    template_data.get('metadata', {})
+                )
+                
+                logger.info("Created template '%s' from %s", template.name, args.from_file)
+                return 0
+                
+            except Exception as e:
+                logger.error("Error creating template: %s", str(e))
+                return 1
+        else:
+            # Interactive template creation
+            logger.info("Interactive template creation not yet implemented.")
+            logger.info("Please use --from-file option with a JSON template file.")
+            return 1
+    else:
+        logger.error("Please specify a template subcommand (list, show, create)")
+        return 1
+
+
 def main() -> int:
     """
     Main entry point for the CLI.
@@ -519,6 +683,8 @@ def main() -> int:
         return tag_command(args)
     elif args.command == 'batch':
         return batch_command(args)
+    elif args.command == 'journal':
+        return journal_command(args)
     else:
         # No command specified, show help
         parser.print_help()
