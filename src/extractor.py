@@ -110,12 +110,17 @@ def get_project_name(workspace_path: str) -> str:
         return ""
 
 
-def analyze_workspace(workspace_path: str) -> None:
+def analyze_workspace(workspace_path: str, output_dir: str = '.', filename_pattern: str = 'chat_data_{workspace}.json') -> Optional[str]:
     """
     Analyze the contents of a workspace folder and extract chat data.
     
     Args:
         workspace_path: Path to the workspace folder
+        output_dir: Directory to save extracted files
+        filename_pattern: Pattern for output filenames
+        
+    Returns:
+        Path to the saved file if data was extracted, None otherwise
     """
     logger.info("\nAnalyzing workspace: %s", os.path.basename(workspace_path))
     
@@ -136,15 +141,25 @@ def analyze_workspace(workspace_path: str) -> None:
             
             if chat_data:
                 # Save extracted chat data to a JSON file
-                output_file = f"chat_data_{os.path.basename(workspace_path)}.json"
+                workspace_id = os.path.basename(workspace_path)
+                filename = filename_pattern.format(workspace=workspace_id)
+                output_file = os.path.join(output_dir, filename)
+                
                 with open(output_file, 'w', encoding='utf-8') as f:
                     json.dump(chat_data, f, indent=2)
                 logger.info("Saved chat data to %s", output_file)
+                return output_file
+    
+    return None
 
 
-def extract_chats() -> List[str]:
+def extract_chats(output_dir: str = '.', filename_pattern: str = 'chat_data_{workspace}.json') -> List[str]:
     """
     Extract and analyze chat data from Cursor workspaces.
+    
+    Args:
+        output_dir: Directory to save extracted files
+        filename_pattern: Pattern for output filenames
     
     Returns:
         List of paths to extracted JSON files
@@ -169,9 +184,8 @@ def extract_chats() -> List[str]:
     
     for workspace in workspaces:
         workspace_path = os.path.join(base_path, workspace)
-        analyze_workspace(workspace_path)
-        output_file = f"chat_data_{workspace}.json"
-        if os.path.exists(output_file):
+        output_file = analyze_workspace(workspace_path, output_dir, filename_pattern)
+        if output_file:
             extracted_files.append(output_file)
     
     return extracted_files 

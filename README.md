@@ -12,6 +12,8 @@ This project provides utilities to extract chat data from Cursor's SQLite databa
 - **Multiple Output Formats**: Convert your chats to CSV, JSON, or Markdown formats
 - **Chat Viewer**: Browse and view your chat files with a simple command-line interface
 - **Cross-Platform Support**: Works on Windows, macOS, and Linux (including WSL)
+- **Smart Tagging System**: Automatically tag chats by programming language, framework, and topic
+- **Tag Management**: Add, remove, search, and organize chats with hierarchical tags
 
 ## Project Components
 
@@ -31,6 +33,15 @@ To extract chat data from your Cursor installation:
 ```bash
 python -m src extract
 python -m src extract --verbose  # detailed logging
+
+# Extract to a custom directory
+python -m src extract --output-dir ./my_extracts
+
+# Use a custom filename pattern
+python -m src extract --filename-pattern "cursor_{workspace}_backup.json"
+
+# Combine options
+python -m src extract -o ./backups --filename-pattern "{workspace}_chats.json"
 ```
 
 This will create JSON files containing your chat data.
@@ -41,6 +52,15 @@ To convert an extracted JSON file to CSV format:
 
 ```bash
 python -m src convert chat_data_[hash].json
+
+# Save to a custom directory
+python -m src convert chat_data_[hash].json --output-dir ./csv_exports
+
+# Use a custom output filename
+python -m src convert chat_data_[hash].json --output-file my_chats.csv
+
+# Combine options
+python -m src convert chat_data_[hash].json -o ./exports --output-file cursor_backup.csv
 ```
 
 ### Converting to Markdown
@@ -58,6 +78,66 @@ To browse and view your chat files:
 ```bash
 python -m src view                   # List all chat files
 python -m src view chat_filename.md  # View a specific chat file
+```
+
+### Managing Tags
+
+The tagging system helps organize and categorize your chat conversations:
+
+```bash
+# Auto-tag chats from a JSON file
+python -m src tag auto chat_data_[hash].json
+
+# Manually add tags to a chat
+python -m src tag add [chat_id] python api testing
+
+# Remove tags from a chat
+python -m src tag remove [chat_id] testing
+
+# List all tags with usage counts
+python -m src tag list --all
+
+# List tags for a specific chat
+python -m src tag list [chat_id]
+
+# Find chats by tag (supports wildcards)
+python -m src tag find "language/python"
+python -m src tag find "topic/*"
+python -m src tag find "*/api"
+
+# Use a custom tags file
+python -m src tag auto chat_data.json --tags-file my_tags.json
+```
+
+Tags are hierarchical and normalized (lowercase, spaces become hyphens). The auto-tagger recognizes:
+- **Languages**: Python, JavaScript, TypeScript, Java, C++, Rust, Go, Ruby, PHP, Swift
+- **Frameworks**: React, Vue, Angular, Django, Flask, Express, Spring, Rails, FastAPI, Next.js
+- **Topics**: API/REST, databases, testing, Docker/Kubernetes, Git, CI/CD, security, performance, debugging
+- **AI/ML**: Machine learning, LLMs, NLP, computer vision
+
+### Batch Processing
+
+Process multiple files at once with the `--all` flag or use the `batch` command:
+
+```bash
+# Convert all JSON files to markdown
+python -m src convert --all --format markdown
+
+# Convert all files matching a pattern
+python -m src convert --all --pattern "chat_data_2024*.json" --format csv
+
+# Auto-tag all JSON files
+python -m src tag auto --all
+
+# Run complete pipeline: extract, convert to markdown, and tag
+python -m src batch
+
+# Run specific batch operations
+python -m src batch --convert --tag  # Skip extraction
+python -m src batch --extract --convert --format csv  # Extract and convert to CSV
+
+# Specify output directory for batch operations
+python -m src batch --output-dir ./my_exports
 ```
 
 ## File Naming Convention

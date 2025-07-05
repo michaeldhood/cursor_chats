@@ -18,7 +18,7 @@
   > Dependencies: 2
   > Implement directory scanning and file identification logic for Cursor chat logs
 
-- [ ] **ID 2.2: Extraction Core Logic** (Priority: high)
+- [x] **ID 2.2: Extraction Core Logic** (Priority: high) ✓ Completed
 
   > Dependencies: 2.1
   > Build the core extraction engine with configurable output paths
@@ -33,7 +33,7 @@
   > Dependencies: 2
   > Create robust JSON parser with validation and error handling for chat data
 
-- [ ] **ID 4: Basic Tagging System** (Priority: medium)
+- [x] **ID 4: Basic Tagging System** (Priority: medium) ✓ Completed
 
   > Dependencies: 3
   > Implement manual and regex-based tagging for organizing extracted chats
@@ -58,7 +58,7 @@
   > Dependencies: 6.1
   > Implement extract, parse, journal, tag commands with basic functionality
 
-- [ ] **ID 6.3: Batch Processing & Advanced Features** (Priority: medium)
+- [x] **ID 6.3: Batch Processing & Advanced Features** (Priority: medium) ✓ Completed
 
   > Dependencies: 6.2
   > Add batch operations, configuration files, logging, and progress indicators
@@ -104,9 +104,16 @@
 
 ## Completed Tasks
 
-_Completed tasks will be archived to global memory and listed here for reference._
+### Recently Completed (2025-07-05)
+
+- [x] **ID 2.2: Extraction Core Logic** - Added customizable output paths (CUR-1)
+- [x] **ID 4: Basic Tagging System** - Implemented manual and regex-based tagging (CUR-5)
+- [x] **ID 6.3: Batch Processing & Advanced Features** - Added batch processing with --all flag and replaced print statements with logging (CUR-11, CUR-12)
+
+_Additional completed tasks will be archived to global memory and listed here for reference._
 
 ---
 
 _Tasks updated with sub-tasks: 2025-06-07T23:49:29Z_
+_Tasks marked completed: 2025-07-05T00:00:00Z (2.2, 4, 6.3)_
 _Note: Task 14 (Team Collaboration Tools) moved to separate project for future development_

@@ -8,17 +8,20 @@ import pandas as pd
 from pathlib import Path
 import logging
 
+from src.tagger import TagManager
+
 logger = logging.getLogger(__name__)
 
-def parse_chat_json(file_path: str) -> pd.DataFrame:
+def parse_chat_json(file_path: str, tag_manager: Optional[TagManager] = None) -> pd.DataFrame:
     """
     Parse a Cursor chat JSON file and convert it to a DataFrame.
     
     Args:
         file_path: Path to the JSON file containing chat data
+        tag_manager: Optional TagManager instance for auto-tagging
         
     Returns:
-        DataFrame containing structured chat data
+        DataFrame containing structured chat data with tags column if tag_manager provided
         
     Raises:
         FileNotFoundError: If the specified file doesn't exist
@@ -67,6 +70,26 @@ def parse_chat_json(file_path: str) -> pd.DataFrame:
     
     # Create DataFrame
     df = pd.DataFrame(rows)
+    
+    # Add auto-tagging if tag_manager is provided
+    if tag_manager:
+        tags_column = []
+        for _, row in df.iterrows():
+            # Combine text from user and AI messages for better tagging
+            content = str(row.get('text', '')) + ' ' + str(row.get('rawText', ''))
+            auto_tags = tag_manager.auto_tag(content)
+            
+            # Store tags for this message
+            tags_column.append(list(auto_tags))
+            
+            # Also add tags to the chat (identified by tabId)
+            if auto_tags and row.get('tabId'):
+                existing_tags = tag_manager.get_tags(row['tabId'])
+                new_tags = list(auto_tags - set(existing_tags))
+                if new_tags:
+                    tag_manager.add_tags(row['tabId'], new_tags)
+        
+        df['tags'] = tags_column
     
     return df
 
