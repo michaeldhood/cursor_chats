@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}{{ chat.title }} - Cursor Chats{% endblock %}
+
+{% block content %}
+<div style="background: white; padding: 24px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+    <h2>{{ chat.title or 'Untitled Chat' }}</h2>
+    <div class="chat-meta" style="margin-top: 12px; margin-bottom: 24px;">
+        <span class="badge {{ chat.mode }}">{{ chat.mode }}</span>
+        <span>Created: {{ chat.created_at if chat.created_at else 'Unknown' }}</span>
+        {% if chat.workspace_path %}
+        <span>Workspace: {{ chat.workspace_path }}</span>
+        {% endif %}
+    </div>
+    
+    {% if chat.files %}
+    <div style="margin-bottom: 24px; padding: 12px; background: #f5f5f5; border-radius: 4px;">
+        <strong>Relevant Files:</strong>
+        <ul style="margin-top: 8px; margin-left: 20px;">
+            {% for file in chat.files %}
+            <li><code>{{ file }}</code></li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+    
+    <div style="margin-top: 32px;">
+        <h3>Messages</h3>
+        {% for msg in chat.messages %}
+        <div class="message {{ msg.role }}">
+            <div class="message-header">
+                {{ msg.role|title }}
+                {% if msg.created_at %}
+                <span style="color: #999; font-size: 0.9em; margin-left: 12px;">{{ msg.created_at[:19] }}</span>
+                {% endif %}
+            </div>
+            <div class="message-content">{{ msg.text or msg.rich_text or '' }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+

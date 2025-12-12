@@ -14,6 +14,11 @@ from src.parser import parse_chat_json, convert_df_to_markdown, export_to_csv
 from src.viewer import list_chat_files, find_chat_file, display_chat_file
 from src.tagger import TagManager
 from src.journal import JournalGenerator, generate_journal_from_file
+from src.core.db import ChatDatabase, get_default_db_path
+from src.services.aggregator import ChatAggregator
+from src.services.legacy_importer import LegacyChatImporter
+from src.services.search import ChatSearchService
+from src.services.exporter import ChatExporter
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +75,46 @@ def create_parser() -> argparse.ArgumentParser:
     
     # Info command
     info_parser = subparsers.add_parser('info', help='Show information about Cursor installation')
+    
+    # Ingest command (NEW)
+    ingest_parser = subparsers.add_parser('ingest', help='Ingest chats from Cursor databases into local DB')
+    ingest_parser.add_argument('--db-path', type=str, 
+                              help='Path to database file (default: OS-specific location)')
+    
+    # Import-legacy command (NEW)
+    import_parser = subparsers.add_parser('import-legacy', help='Import legacy chat_data_*.json files')
+    import_parser.add_argument('path', nargs='?', default='.', 
+                              help='Path to directory or file to import (default: current directory)')
+    import_parser.add_argument('--pattern', default='chat_data_*.json',
+                              help='File pattern for directory import (default: chat_data_*.json)')
+    import_parser.add_argument('--db-path', type=str,
+                              help='Path to database file (default: OS-specific location)')
+    
+    # Search command (NEW)
+    search_parser = subparsers.add_parser('search', help='Search chats in local database')
+    search_parser.add_argument('query', help='Search query (supports FTS5 syntax)')
+    search_parser.add_argument('--limit', type=int, default=20,
+                              help='Maximum number of results (default: 20)')
+    search_parser.add_argument('--db-path', type=str,
+                              help='Path to database file (default: OS-specific location)')
+    
+    # Export command (NEW)
+    export_parser = subparsers.add_parser('export', help='Export chats from database')
+    export_parser.add_argument('--format', choices=['markdown', 'json'], default='markdown',
+                              help='Export format (default: markdown)')
+    export_parser.add_argument('--output-dir', '-o', type=str, default='exports',
+                              help='Output directory (default: exports)')
+    export_parser.add_argument('--chat-id', type=int,
+                              help='Export specific chat by ID (otherwise exports all)')
+    export_parser.add_argument('--db-path', type=str,
+                              help='Path to database file (default: OS-specific location)')
+    
+    # Web UI command (NEW)
+    web_parser = subparsers.add_parser('web', help='Start web UI server')
+    web_parser.add_argument('--host', default='127.0.0.1', help='Host to bind to (default: 127.0.0.1)')
+    web_parser.add_argument('--port', type=int, default=5000, help='Port to bind to (default: 5000)')
+    web_parser.add_argument('--db-path', type=str,
+                           help='Path to database file (default: OS-specific location)')
     
     # Tag command
     tag_parser = subparsers.add_parser('tag', help='Manage tags for chat conversations')
@@ -656,6 +701,192 @@ def journal_template_command(args: argparse.Namespace) -> int:
         return 1
 
 
+def ingest_command(args: argparse.Namespace) -> int:
+    """
+    Handle the ingest command.
+    
+    Args:
+        args: Command line arguments
+        
+    Returns:
+        Exit code (0 for success, non-zero for error)
+    """
+    logger.info("Ingesting chats from Cursor databases...")
+    
+    db_path = args.db_path or os.getenv('CURSOR_CHATS_DB_PATH')
+    db = ChatDatabase(db_path)
+    
+    try:
+        aggregator = ChatAggregator(db)
+        
+        def progress_callback(composer_id, total, current):
+            if current % 100 == 0 or current == total:
+                logger.info("Progress: %d/%d composers processed...", current, total)
+        
+        stats = aggregator.ingest_all(progress_callback)
+        
+        logger.info("\nIngestion complete!")
+        logger.info("  Ingested: %d chats", stats["ingested"])
+        logger.info("  Skipped: %d chats", stats["skipped"])
+        logger.info("  Errors: %d chats", stats["errors"])
+        
+        return 0 if stats["errors"] == 0 else 1
+        
+    except Exception as e:
+        logger.error("Error during ingestion: %s", e)
+        return 1
+    finally:
+        db.close()
+
+
+def import_legacy_command(args: argparse.Namespace) -> int:
+    """
+    Handle the import-legacy command.
+    
+    Args:
+        args: Command line arguments
+        
+    Returns:
+        Exit code (0 for success, non-zero for error)
+    """
+    logger.info("Importing legacy chat files...")
+    
+    db_path = args.db_path or os.getenv('CURSOR_CHATS_DB_PATH')
+    db = ChatDatabase(db_path)
+    
+    try:
+        importer = LegacyChatImporter(db)
+        path = Path(args.path)
+        
+        if path.is_file():
+            # Import single file
+            count = importer.import_file(path)
+            logger.info("Imported %d chats from %s", count, path)
+        else:
+            # Import directory
+            stats = importer.import_directory(path, args.pattern)
+            logger.info("\nImport complete!")
+            logger.info("  Files processed: %d", stats["files"])
+            logger.info("  Chats imported: %d", stats["chats"])
+            logger.info("  Errors: %d", stats["errors"])
+            count = stats["chats"]
+        
+        return 0 if count > 0 else 1
+        
+    except Exception as e:
+        logger.error("Error during import: %s", e)
+        return 1
+    finally:
+        db.close()
+
+
+def search_command(args: argparse.Namespace) -> int:
+    """
+    Handle the search command.
+    
+    Args:
+        args: Command line arguments
+        
+    Returns:
+        Exit code (0 for success, non-zero for error)
+    """
+    db_path = args.db_path or os.getenv('CURSOR_CHATS_DB_PATH')
+    db = ChatDatabase(db_path)
+    
+    try:
+        search_service = ChatSearchService(db)
+        results = search_service.search(args.query, args.limit)
+        
+        if not results:
+            logger.info("No chats found matching '%s'", args.query)
+            return 1
+        
+        logger.info("Found %d chats matching '%s':\n", len(results), args.query)
+        
+        for chat in results:
+            logger.info("Chat ID: %d", chat['id'])
+            logger.info("  Title: %s", chat['title'])
+            logger.info("  Mode: %s", chat['mode'])
+            logger.info("  Created: %s", chat['created_at'])
+            if chat.get('workspace_path'):
+                logger.info("  Workspace: %s", chat['workspace_path'])
+            logger.info("")
+        
+        return 0
+        
+    except Exception as e:
+        logger.error("Error during search: %s", e)
+        return 1
+    finally:
+        db.close()
+
+
+def web_command(args: argparse.Namespace) -> int:
+    """
+    Handle the web command - start Flask server.
+    
+    Args:
+        args: Command line arguments
+        
+    Returns:
+        Exit code (0 for success, non-zero for error)
+    """
+    if args.db_path:
+        os.environ['CURSOR_CHATS_DB_PATH'] = args.db_path
+    
+    from src.ui.web.app import app
+    
+    logger.info("Starting web UI server on http://%s:%d", args.host, args.port)
+    logger.info("Press Ctrl+C to stop")
+    
+    app.run(host=args.host, port=args.port, debug=False)
+    return 0
+
+
+def export_command(args: argparse.Namespace) -> int:
+    """
+    Handle the export command.
+    
+    Args:
+        args: Command line arguments
+        
+    Returns:
+        Exit code (0 for success, non-zero for error)
+    """
+    logger.info("Exporting chats...")
+    
+    db_path = args.db_path or os.getenv('CURSOR_CHATS_DB_PATH')
+    db = ChatDatabase(db_path)
+    
+    try:
+        exporter = ChatExporter(db)
+        output_dir = Path(args.output_dir)
+        
+        if args.chat_id:
+            # Export single chat
+            output_path = output_dir / f"chat_{args.chat_id}.md"
+            if exporter.export_chat_markdown(args.chat_id, output_path):
+                logger.info("Exported chat %d to %s", args.chat_id, output_path)
+                return 0
+            else:
+                return 1
+        else:
+            # Export all chats
+            if args.format == 'markdown':
+                count = exporter.export_all_markdown(output_dir)
+                logger.info("Exported %d chats to %s", count, output_dir)
+                return 0 if count > 0 else 1
+            else:
+                logger.error("JSON export not yet implemented")
+                return 1
+        
+    except Exception as e:
+        logger.error("Error during export: %s", e)
+        return 1
+    finally:
+        db.close()
+
+
 def main() -> int:
     """
     Main entry point for the CLI.
@@ -685,6 +916,16 @@ def main() -> int:
         return batch_command(args)
     elif args.command == 'journal':
         return journal_command(args)
+    elif args.command == 'ingest':
+        return ingest_command(args)
+    elif args.command == 'import-legacy':
+        return import_legacy_command(args)
+    elif args.command == 'search':
+        return search_command(args)
+    elif args.command == 'export':
+        return export_command(args)
+    elif args.command == 'web':
+        return web_command(args)
     else:
         # No command specified, show help
         parser.print_help()
