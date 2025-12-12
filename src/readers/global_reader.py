@@ -122,11 +122,6 @@ class GlobalComposerReader:
         
         try:
             conn = sqlite3.connect(str(self.db_path))
-            # Use binary mode for keys
-            conn.row_factory = lambda cursor, row: {
-                'key': row[0],
-                'value': row[1]
-            }
             cursor = conn.cursor()
             
             # Check if cursorDiskKV table exists
@@ -147,8 +142,8 @@ class GlobalComposerReader:
             
             count = 0
             for row in cursor.fetchall():
-                key_data = row['key']
-                value_data = row['value']
+                key_data = row[0]
+                value_data = row[1]
                 
                 # Decode key
                 decoded_key = self._decode_key(key_data)
@@ -201,10 +196,6 @@ class GlobalComposerReader:
         
         try:
             conn = sqlite3.connect(str(self.db_path))
-            conn.row_factory = lambda cursor, row: {
-                'key': row[0],
-                'value': row[1]
-            }
             cursor = conn.cursor()
             
             # Search for key containing this composer ID
@@ -221,7 +212,7 @@ class GlobalComposerReader:
                 return None
             
             # Parse value
-            value_data = row['value']
+            value_data = row[1]
             try:
                 if isinstance(value_data, bytes):
                     composer_data = json.loads(value_data.decode('utf-8'))
