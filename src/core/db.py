@@ -424,6 +424,54 @@ class ChatDatabase:
         
         return chat_data
     
+    def count_chats(self, workspace_id: Optional[int] = None) -> int:
+        """
+        Count total chats, optionally filtered by workspace.
+        
+        Parameters
+        ----
+        workspace_id : int, optional
+            Filter by workspace
+            
+        Returns
+        ----
+        int
+            Total count of chats
+        """
+        cursor = self.conn.cursor()
+        
+        if workspace_id:
+            cursor.execute("SELECT COUNT(*) FROM chats WHERE workspace_id = ?", (workspace_id,))
+        else:
+            cursor.execute("SELECT COUNT(*) FROM chats")
+        
+        return cursor.fetchone()[0]
+    
+    def count_search(self, query: str) -> int:
+        """
+        Count search results for a query.
+        
+        Parameters
+        ----
+        query : str
+            Search query (FTS5 syntax)
+            
+        Returns
+        ----
+        int
+            Total count of matching chats
+        """
+        cursor = self.conn.cursor()
+        
+        cursor.execute("""
+            SELECT COUNT(DISTINCT c.id)
+            FROM chats c
+            INNER JOIN message_fts fts ON c.id = fts.chat_id
+            WHERE message_fts MATCH ?
+        """, (query,))
+        
+        return cursor.fetchone()[0]
+    
     def list_chats(self, workspace_id: Optional[int] = None, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         """
         List chats with optional filtering.

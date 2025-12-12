@@ -183,6 +183,9 @@ class WorkspaceStateReader:
         """
         Extract all composer IDs referenced in a workspace.
         
+        Only extracts from composer.composerData.allComposers[*].composerId
+        (the authoritative source for composer IDs in a workspace).
+        
         Parameters
         ----
         workspace_hash : str
@@ -199,7 +202,7 @@ class WorkspaceStateReader:
         
         composer_ids = []
         
-        # From composer_data
+        # Only from composer_data.allComposers (authoritative source)
         if metadata.get("composer_data") and isinstance(metadata["composer_data"], dict):
             all_composers = metadata["composer_data"].get("allComposers", [])
             for composer in all_composers:
@@ -207,11 +210,44 @@ class WorkspaceStateReader:
                 if composer_id:
                     composer_ids.append(composer_id)
         
-        # From generations (they reference composer IDs)
-        for gen in metadata.get("generations", []):
-            composer_id = gen.get("generationUUID")  # Note: might be different field
-            if composer_id:
-                composer_ids.append(composer_id)
-        
         return list(set(composer_ids))  # Deduplicate
+    
+    def get_composer_heads_for_workspace(self, workspace_hash: str) -> Dict[str, Dict[str, Any]]:
+        """
+        Extract composer metadata (heads) from workspace.
+        
+        Returns a mapping of composer_id -> composer head metadata
+        (name, subtitle, createdAt, lastUpdatedAt, mode, etc.)
+        
+        Parameters
+        ----
+        workspace_hash : str
+            Workspace hash
+            
+        Returns
+        ----
+        Dict[str, Dict[str, Any]]
+            Mapping of composer_id -> composer head metadata
+        """
+        metadata = self.read_workspace_metadata(workspace_hash)
+        if not metadata:
+            return {}
+        
+        composer_heads = {}
+        
+        if metadata.get("composer_data") and isinstance(metadata["composer_data"], dict):
+            all_composers = metadata["composer_data"].get("allComposers", [])
+            for composer in all_composers:
+                composer_id = composer.get("composerId")
+                if composer_id:
+                    composer_heads[composer_id] = {
+                        "name": composer.get("name"),
+                        "subtitle": composer.get("subtitle"),
+                        "createdAt": composer.get("createdAt"),
+                        "lastUpdatedAt": composer.get("lastUpdatedAt"),
+                        "unifiedMode": composer.get("unifiedMode"),
+                        "forceMode": composer.get("forceMode"),
+                    }
+        
+        return composer_heads
 

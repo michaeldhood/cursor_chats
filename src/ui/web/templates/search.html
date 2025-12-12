@@ -4,6 +4,9 @@
 
 {% block content %}
 <h2>Search Results for "{{ query }}"</h2>
+{% if total_results is defined %}
+<p style="color: #666; margin-bottom: 16px;">Found {{ total_results }} result{{ 's' if total_results != 1 else '' }}</p>
+{% endif %}
 
 <div class="chat-list">
     {% if results %}

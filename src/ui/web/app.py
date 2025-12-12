@@ -35,8 +35,8 @@ def index():
         
         chats = search_service.list_chats(limit=limit, offset=offset)
         
-        # Get total count (approximate)
-        total_chats = len(search_service.list_chats(limit=10000))
+        # Get total count using COUNT query
+        total_chats = search_service.count_chats()
         
         return render_template('index.html', 
                              chats=chats, 
@@ -64,11 +64,13 @@ def search():
         offset = (page - 1) * limit
         
         results = search_service.search(query, limit=limit, offset=offset)
+        total_results = search_service.count_search(query)
         
         return render_template('search.html', 
                              query=query, 
                              results=results,
                              page=page,
+                             total_results=total_results,
                              has_next=len(results) == limit)
     finally:
         db.close()

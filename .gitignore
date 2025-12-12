@@ -22,6 +22,7 @@ Thumbs.db
 *.db
 chats.db
 **/chats.db
-# User data directory
-Library/
-.cursor-chats/
+
+# User data directory (cursor-chats app data)
+**/cursor-chats/chats.db
+**/Application Support/cursor-chats/

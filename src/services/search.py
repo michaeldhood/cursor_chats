@@ -81,4 +81,36 @@ class ChatSearchService:
             Chat data, or None if not found
         """
         return self.db.get_chat(chat_id)
+    
+    def count_chats(self, workspace_id: Optional[int] = None) -> int:
+        """
+        Count total chats, optionally filtered by workspace.
+        
+        Parameters
+        ----
+        workspace_id : int, optional
+            Filter by workspace
+            
+        Returns
+        ----
+        int
+            Total count
+        """
+        return self.db.count_chats(workspace_id)
+    
+    def count_search(self, query: str) -> int:
+        """
+        Count search results for a query.
+        
+        Parameters
+        ----
+        query : str
+            Search query
+            
+        Returns
+        ----
+        int
+            Total count of matching chats
+        """
+        return self.db.count_search(query)
 

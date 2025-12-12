@@ -42,7 +42,8 @@ class ChatAggregator:
         self.global_reader = GlobalComposerReader()
     
     def _convert_composer_to_chat(self, composer_data: Dict[str, Any], 
-                                   workspace_id: Optional[int] = None) -> Optional[Chat]:
+                                   workspace_id: Optional[int] = None,
+                                   composer_head: Optional[Dict[str, Any]] = None) -> Optional[Chat]:
         """
         Convert Cursor composer data to Chat domain model.
         
@@ -52,6 +53,8 @@ class ChatAggregator:
             Raw composer data from global database
         workspace_id : int, optional
             Workspace ID if known
+        composer_head : Dict[str, Any], optional
+            Composer head metadata from workspace (for title enrichment)
             
         Returns
         ----
@@ -62,9 +65,19 @@ class ChatAggregator:
         if not composer_id:
             return None
         
-        # Determine mode
-        force_mode = composer_data.get("forceMode", "chat")
-        unified_mode = composer_data.get("unifiedMode", "chat")
+        # Determine mode (prefer workspace head, then global data)
+        force_mode = None
+        unified_mode = None
+        
+        if composer_head:
+            force_mode = composer_head.get("forceMode")
+            unified_mode = composer_head.get("unifiedMode")
+        
+        if not force_mode:
+            force_mode = composer_data.get("forceMode", "chat")
+        if not unified_mode:
+            unified_mode = composer_data.get("unifiedMode", "chat")
+        
         mode_map = {
             "chat": ChatMode.CHAT,
             "edit": ChatMode.EDIT,
@@ -73,19 +86,43 @@ class ChatAggregator:
         }
         mode = mode_map.get(force_mode or unified_mode, ChatMode.CHAT)
         
-        # Extract title
-        title = composer_data.get("name") or composer_data.get("subtitle") or "Untitled Chat"
+        # Extract title with enrichment priority:
+        # 1. workspace composer head name
+        # 2. workspace composer head subtitle
+        # 3. global composer data name/subtitle
+        # 4. fallback
+        title = None
+        if composer_head:
+            title = composer_head.get("name") or composer_head.get("subtitle")
         
-        # Extract timestamps
+        if not title:
+            title = composer_data.get("name") or composer_data.get("subtitle")
+        
+        if not title:
+            title = "Untitled Chat"
+        
+        # Extract timestamps (prefer workspace head, then global data)
         created_at = None
-        if composer_data.get("createdAt"):
+        if composer_head and composer_head.get("createdAt"):
+            try:
+                created_at = datetime.fromtimestamp(composer_head["createdAt"] / 1000)
+            except (ValueError, TypeError):
+                pass
+        
+        if not created_at and composer_data.get("createdAt"):
             try:
                 created_at = datetime.fromtimestamp(composer_data["createdAt"] / 1000)
             except (ValueError, TypeError):
                 pass
         
         last_updated_at = None
-        if composer_data.get("lastUpdatedAt"):
+        if composer_head and composer_head.get("lastUpdatedAt"):
+            try:
+                last_updated_at = datetime.fromtimestamp(composer_head["lastUpdatedAt"] / 1000)
+            except (ValueError, TypeError):
+                pass
+        
+        if not last_updated_at and composer_data.get("lastUpdatedAt"):
             try:
                 last_updated_at = datetime.fromtimestamp(composer_data["lastUpdatedAt"] / 1000)
             except (ValueError, TypeError):
@@ -191,6 +228,24 @@ class ChatAggregator:
         
         return composer_to_workspace
     
+    def _build_composer_heads_map(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Build mapping from composer_id to composer head metadata.
+        
+        Returns
+        ----
+        Dict[str, Dict[str, Any]]
+            Mapping of composer_id -> composer head (name, subtitle, etc.)
+        """
+        composer_heads = {}
+        workspaces_metadata = self.workspace_reader.read_all_workspaces()
+        
+        for workspace_hash, metadata in workspaces_metadata.items():
+            heads = self.workspace_reader.get_composer_heads_for_workspace(workspace_hash)
+            composer_heads.update(heads)
+        
+        return composer_heads
+    
     def ingest_all(self, progress_callback: Optional[callable] = None) -> Dict[str, int]:
         """
         Ingest all chats from Cursor databases.
@@ -211,28 +266,48 @@ class ChatAggregator:
         logger.info("Building workspace mappings...")
         composer_to_workspace = self._build_composer_to_workspace_map()
         
-        # Read all composers from global database
-        logger.info("Reading composers from global database...")
+        # Build composer heads map for title enrichment
+        logger.info("Building composer heads map...")
+        composer_heads = self._build_composer_heads_map()
+        
+        # Stream composers from global database (don't materialize)
+        logger.info("Streaming composers from global database...")
         stats = {"ingested": 0, "skipped": 0, "errors": 0}
         
-        composers = list(self.global_reader.read_all_composers())
-        total = len(composers)
+        # Get approximate total for progress (optional, can skip if slow)
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(self.global_reader.db_path))
+            cursor = conn.cursor()
+            search_prefix = "composerData:".encode('utf-8')
+            hex_prefix = search_prefix.hex()
+            cursor.execute("SELECT COUNT(*) FROM cursorDiskKV WHERE hex(key) LIKE ?", (f"{hex_prefix}%",))
+            total = cursor.fetchone()[0]
+            conn.close()
+            logger.info("Found approximately %d composers to process", total)
+        except Exception as e:
+            logger.warning("Could not get total count: %s", e)
+            total = None
         
-        logger.info("Found %d composers to process", total)
-        
-        for idx, composer_info in enumerate(composers):
+        # Stream processing
+        idx = 0
+        for composer_info in self.global_reader.read_all_composers():
+            idx += 1
             composer_id = composer_info["composer_id"]
             composer_data = composer_info["data"]
             
-            if progress_callback:
-                progress_callback(composer_id, total, idx + 1)
+            if progress_callback and total:
+                progress_callback(composer_id, total, idx)
             
             try:
                 # Find workspace for this composer
                 workspace_id = composer_to_workspace.get(composer_id)
                 
+                # Get composer head for title enrichment
+                composer_head = composer_heads.get(composer_id)
+                
                 # Convert to domain model
-                chat = self._convert_composer_to_chat(composer_data, workspace_id)
+                chat = self._convert_composer_to_chat(composer_data, workspace_id, composer_head)
                 if not chat:
                     stats["skipped"] += 1
                     continue
@@ -241,8 +316,8 @@ class ChatAggregator:
                 self.db.upsert_chat(chat)
                 stats["ingested"] += 1
                 
-                if (idx + 1) % 100 == 0:
-                    logger.info("Processed %d/%d composers...", idx + 1, total)
+                if idx % 100 == 0:
+                    logger.info("Processed %d composers...", idx)
                     
             except Exception as e:
                 logger.error("Error processing composer %s: %s", composer_id, e)
