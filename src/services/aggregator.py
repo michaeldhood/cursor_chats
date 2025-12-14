@@ -41,6 +41,51 @@ class ChatAggregator:
         self.workspace_reader = WorkspaceStateReader()
         self.global_reader = GlobalComposerReader()
     
+    def _resolve_conversation_from_headers(
+        self, composer_id: str, headers: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Resolve conversation bubbles from headers-only format.
+        
+        In newer Cursor versions, conversation data is split:
+        - fullConversationHeadersOnly: list of {bubbleId, type} headers
+        - Actual content stored separately as bubbleId:{composerId}:{bubbleId} keys
+        
+        Parameters
+        ----
+        composer_id : str
+            Composer UUID
+        headers : List[Dict[str, Any]]
+            List of bubble headers with bubbleId and type
+            
+        Returns
+        ----
+        List[Dict[str, Any]]
+            List of full bubble objects with text/richText content
+        """
+        conversation = []
+        
+        for header in headers:
+            bubble_id = header.get("bubbleId")
+            if not bubble_id:
+                continue
+            
+            # Fetch full bubble content from separate key
+            bubble_data = self.global_reader.read_bubble(composer_id, bubble_id)
+            
+            if bubble_data:
+                # Merge header info (type) with full bubble data
+                bubble = {**bubble_data}
+                # Ensure type is present (from header if not in bubble)
+                if "type" not in bubble:
+                    bubble["type"] = header.get("type")
+                conversation.append(bubble)
+            else:
+                # Fallback: use header only (will have no text)
+                conversation.append(header)
+        
+        return conversation
+    
     def _convert_composer_to_chat(self, composer_data: Dict[str, Any], 
                                    workspace_id: Optional[int] = None,
                                    composer_head: Optional[Dict[str, Any]] = None) -> Optional[Chat]:
@@ -128,8 +173,19 @@ class ChatAggregator:
             except (ValueError, TypeError):
                 pass
         
-        # Extract conversation
+        # Extract conversation - try multiple formats
+        # Format 1: Old style with full conversation array
         conversation = composer_data.get("conversation", [])
+        
+        # Format 2: New style with headers-only + separate bubble storage
+        # If conversation is empty, try fullConversationHeadersOnly
+        if not conversation:
+            headers = composer_data.get("fullConversationHeadersOnly", [])
+            if headers:
+                conversation = self._resolve_conversation_from_headers(
+                    composer_id, headers
+                )
+        
         messages = []
         relevant_files = set()
         

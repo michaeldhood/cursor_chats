@@ -260,3 +260,47 @@ class GlobalComposerReader:
         except sqlite3.Error as e:
             logger.error("Error reading composer %s: %s", composer_id, e)
             return None
+
+    def read_bubble(self, composer_id: str, bubble_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Read a specific bubble's content by composer and bubble ID.
+
+        Bubble content is stored in separate keys: bubbleId:{composerId}:{bubbleId}
+
+        Parameters
+        ----
+        composer_id : str
+            Composer UUID
+        bubble_id : str
+            Bubble UUID
+
+        Returns
+        ----
+        Dict[str, Any]
+            Bubble data including text/richText, or None if not found
+        """
+        if not self.db_path.exists():
+            return None
+
+        try:
+            conn = sqlite3.connect(str(self.db_path))
+            cursor = conn.cursor()
+
+            key = f"bubbleId:{composer_id}:{bubble_id}".encode("utf-8")
+            cursor.execute(
+                "SELECT value FROM cursorDiskKV WHERE hex(key) = ?", (key.hex(),)
+            )
+            row = cursor.fetchone()
+            conn.close()
+
+            if not row or row[0] is None:
+                return None
+
+            value_data = row[0]
+            if isinstance(value_data, bytes):
+                return json.loads(value_data.decode("utf-8"))
+            return json.loads(value_data)
+
+        except (sqlite3.Error, json.JSONDecodeError, UnicodeDecodeError) as e:
+            logger.debug("Error reading bubble %s:%s: %s", composer_id, bubble_id, e)
+            return None
