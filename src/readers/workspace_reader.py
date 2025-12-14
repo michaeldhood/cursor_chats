@@ -115,7 +115,8 @@ class WorkspaceStateReader:
             row = cursor.fetchone()
             if row:
                 try:
-                    metadata["prompts"] = json.loads(row[0])
+                    if row[0] is not None:
+                        metadata["prompts"] = json.loads(row[0])
                 except json.JSONDecodeError:
                     logger.warning("Failed to parse aiService.prompts for workspace %s", workspace_hash)
             
@@ -124,7 +125,8 @@ class WorkspaceStateReader:
             row = cursor.fetchone()
             if row:
                 try:
-                    metadata["generations"] = json.loads(row[0])
+                    if row[0] is not None:
+                        metadata["generations"] = json.loads(row[0])
                 except json.JSONDecodeError:
                     logger.warning("Failed to parse aiService.generations for workspace %s", workspace_hash)
             
@@ -133,7 +135,8 @@ class WorkspaceStateReader:
             row = cursor.fetchone()
             if row:
                 try:
-                    metadata["composer_data"] = json.loads(row[0])
+                    if row[0] is not None:
+                        metadata["composer_data"] = json.loads(row[0])
                 except json.JSONDecodeError:
                     logger.warning("Failed to parse composer.composerData for workspace %s", workspace_hash)
             

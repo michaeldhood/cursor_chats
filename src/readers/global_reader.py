@@ -165,6 +165,13 @@ class GlobalComposerReader:
                 if not composer_id:
                     continue
 
+                # Cursor occasionally stores NULL/empty payloads; skip safely.
+                if value_data is None:
+                    logger.warning(
+                        "Skipping composer %s because value is NULL", composer_id
+                    )
+                    continue
+
                 # Parse value (should be JSON)
                 try:
                     if isinstance(value_data, bytes):
@@ -227,6 +234,12 @@ class GlobalComposerReader:
 
             # Parse value
             value_data = row[1]
+            if value_data is None:
+                logger.warning(
+                    "Composer %s has NULL value in cursorDiskKV", composer_id
+                )
+                conn.close()
+                return None
             try:
                 if isinstance(value_data, bytes):
                     composer_data = json.loads(value_data.decode("utf-8"))

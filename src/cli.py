@@ -733,7 +733,8 @@ def ingest_command(args: argparse.Namespace) -> int:
         return 0 if stats["errors"] == 0 else 1
         
     except Exception as e:
-        logger.error("Error during ingestion: %s", e)
+        # Include a traceback to make diagnosing Cursor DB edge cases easier.
+        logger.exception("Error during ingestion")
         return 1
     finally:
         db.close()
