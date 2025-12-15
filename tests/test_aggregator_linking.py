@@ -75,11 +75,12 @@ def temp_global_db():
     
     conn = sqlite3.connect(path)
     cursor = conn.cursor()
-    cursor.execute("CREATE TABLE cursorDiskKV (key BLOB, value BLOB)")
+    # Match real Cursor DB schema: key is TEXT with UNIQUE constraint (creates index)
+    cursor.execute("CREATE TABLE cursorDiskKV (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)")
     
     # Insert composer data
     composer_id = "composer-abc-123"
-    key = f"composerData:{composer_id}".encode('utf-8')
+    key = f"composerData:{composer_id}"  # TEXT, not bytes
     value = json.dumps({
         "composerId": composer_id,
         "conversation": [

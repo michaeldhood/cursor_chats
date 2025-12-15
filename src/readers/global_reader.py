@@ -2,7 +2,7 @@
 Reader for global Cursor state database.
 
 Extracts full composer conversations from globalStorage/state.vscdb
-cursorDiskKV table where keys are binary-encoded "composerData:{uuid}".
+cursorDiskKV table where keys are TEXT in format "composerData:{uuid}".
 """
 
 import json
@@ -10,7 +10,7 @@ import logging
 import platform
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, Optional, List
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ class GlobalComposerReader:
     Reads full composer conversations from global Cursor database.
 
     The global database stores all composer data in cursorDiskKV table
-    with binary-encoded keys in format "composerData:{uuid}".
+    with TEXT keys in format "composerData:{uuid}" (indexed for fast lookups).
     """
 
     def __init__(self, global_storage_path: Optional[Path] = None):
@@ -65,36 +65,6 @@ class GlobalComposerReader:
             global_storage_path = get_cursor_global_storage_path()
         self.global_storage_path = global_storage_path
         self.db_path = global_storage_path / "state.vscdb"
-
-    def _decode_key(self, hex_key: bytes) -> Optional[str]:
-        """
-        Decode binary key to string.
-
-        Parameters
-        ----
-        hex_key : bytes
-            Binary key data
-
-        Returns
-        ----
-        str
-            Decoded key string, or None if decoding fails
-        """
-        try:
-            # Keys are stored as hex-encoded strings
-            if isinstance(hex_key, bytes):
-                # Try to decode as UTF-8 first
-                try:
-                    return hex_key.decode("utf-8")
-                except UnicodeDecodeError:
-                    # If that fails, it might be hex-encoded
-                    hex_str = hex_key.hex()
-                    # Try to decode hex to string
-                    return bytes.fromhex(hex_str).decode("utf-8")
-            return str(hex_key)
-        except Exception as e:
-            logger.debug("Failed to decode key: %s", e)
-            return None
 
     def _extract_composer_id_from_key(self, key: str) -> Optional[str]:
         """
@@ -141,27 +111,20 @@ class GlobalComposerReader:
                 return
 
             # Search for keys that start with "composerData:"
-            # Keys are stored as binary, so we need to search by hex pattern
-            search_prefix = "composerData:".encode("utf-8")
-            hex_prefix = search_prefix.hex()
-
-            # Use hex() function to search
+            # Use range query with index: key >= 'composerData:' AND key < 'composerData;'
+            # The ';' character (ASCII 59) is one after ':' (ASCII 58), capturing all composerData:* keys
             cursor.execute(
-                "SELECT key, value FROM cursorDiskKV WHERE hex(key) LIKE ?",
-                (f"{hex_prefix}%",),
+                "SELECT key, value FROM cursorDiskKV WHERE key >= ? AND key < ?",
+                ("composerData:", "composerData;"),
             )
 
             count = 0
             for row in cursor.fetchall():
-                key_data = row[0]
+                key_str = row[0]
                 value_data = row[1]
 
-                # Decode key
-                decoded_key = self._decode_key(key_data)
-                if not decoded_key:
-                    continue
-
-                composer_id = self._extract_composer_id_from_key(decoded_key)
+                # Extract composer ID from key
+                composer_id = self._extract_composer_id_from_key(key_str)
                 if not composer_id:
                     continue
 
@@ -186,7 +149,7 @@ class GlobalComposerReader:
 
                 yield {
                     "composer_id": composer_id,
-                    "key": decoded_key,
+                    "key": key_str,
                     "data": composer_data,
                 }
                 count += 1
@@ -218,13 +181,10 @@ class GlobalComposerReader:
             conn = sqlite3.connect(str(self.db_path))
             cursor = conn.cursor()
 
-            # Search for key containing this composer ID
-            # Keys are binary, so we need to search by hex pattern
-            search_pattern = f"composerData:{composer_id}".encode("utf-8")
-            hex_pattern = search_pattern.hex()
-
+            # Search for exact key match (uses index)
+            key = f"composerData:{composer_id}"
             cursor.execute(
-                "SELECT key, value FROM cursorDiskKV WHERE hex(key) = ?", (hex_pattern,)
+                "SELECT key, value FROM cursorDiskKV WHERE key = ?", (key,)
             )
             row = cursor.fetchone()
 
@@ -286,9 +246,9 @@ class GlobalComposerReader:
             conn = sqlite3.connect(str(self.db_path))
             cursor = conn.cursor()
 
-            key = f"bubbleId:{composer_id}:{bubble_id}".encode("utf-8")
+            key = f"bubbleId:{composer_id}:{bubble_id}"
             cursor.execute(
-                "SELECT value FROM cursorDiskKV WHERE hex(key) = ?", (key.hex(),)
+                "SELECT value FROM cursorDiskKV WHERE key = ?", (key,)
             )
             row = cursor.fetchone()
             conn.close()
@@ -304,3 +264,67 @@ class GlobalComposerReader:
         except (sqlite3.Error, json.JSONDecodeError, UnicodeDecodeError) as e:
             logger.debug("Error reading bubble %s:%s: %s", composer_id, bubble_id, e)
             return None
+
+    def read_bubbles_batch(self, composer_id: str, bubble_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """
+        Fetch multiple bubbles for a composer in a single query.
+        
+        More efficient than calling read_bubble() multiple times when processing
+        conversations with fullConversationHeadersOnly format.
+        
+        Parameters
+        ----
+        composer_id : str
+            Composer UUID
+        bubble_ids : List[str]
+            List of bubble UUIDs to fetch
+            
+        Returns
+        ----
+        Dict[str, Dict[str, Any]]
+            Mapping of bubble_id -> bubble data (only includes found bubbles)
+        """
+        if not self.db_path.exists() or not bubble_ids:
+            return {}
+        
+        try:
+            conn = sqlite3.connect(str(self.db_path))
+            cursor = conn.cursor()
+            
+            # Build keys and query with IN clause
+            keys = [f"bubbleId:{composer_id}:{bubble_id}" for bubble_id in bubble_ids]
+            placeholders = ','.join('?' * len(keys))
+            
+            cursor.execute(
+                f"SELECT key, value FROM cursorDiskKV WHERE key IN ({placeholders})",
+                keys
+            )
+            
+            bubbles = {}
+            for row in cursor.fetchall():
+                key_str = row[0]
+                value_data = row[1]
+                
+                if value_data is None:
+                    continue
+                
+                # Extract bubble_id from key (format: bubbleId:{composer_id}:{bubble_id})
+                # Key format: "bubbleId:{composer_id}:{bubble_id}"
+                parts = key_str.split(':', 2)
+                if len(parts) == 3 and parts[0] == "bubbleId":
+                    bubble_id = parts[2]
+                    try:
+                        if isinstance(value_data, bytes):
+                            bubble_data = json.loads(value_data.decode("utf-8"))
+                        else:
+                            bubble_data = json.loads(value_data)
+                        bubbles[bubble_id] = bubble_data
+                    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                        logger.debug("Failed to parse bubble %s:%s: %s", composer_id, bubble_id, e)
+            
+            conn.close()
+            return bubbles
+            
+        except sqlite3.Error as e:
+            logger.debug("Error reading bubbles batch for %s: %s", composer_id, e)
+            return {}

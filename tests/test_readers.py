@@ -22,11 +22,14 @@ def temp_global_db():
 
     conn = sqlite3.connect(path)
     cursor = conn.cursor()
-    cursor.execute("CREATE TABLE cursorDiskKV (key BLOB, value BLOB)")
+    # Match real Cursor DB schema: key is TEXT with UNIQUE constraint (creates index)
+    cursor.execute(
+        "CREATE TABLE cursorDiskKV (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)"
+    )
 
     # Insert test composer data
     composer_id = "test-composer-123"
-    key = f"composerData:{composer_id}".encode("utf-8")
+    key = f"composerData:{composer_id}"  # TEXT, not bytes
     value = json.dumps(
         {
             "composerId": composer_id,
@@ -70,7 +73,7 @@ def test_global_reader_skips_null_values(temp_global_db):
     conn = sqlite3.connect(str(temp_global_db))
     cursor = conn.cursor()
     null_composer_id = "null-composer-456"
-    null_key = f"composerData:{null_composer_id}".encode("utf-8")
+    null_key = f"composerData:{null_composer_id}"  # TEXT, not bytes
     cursor.execute(
         "INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)", (null_key, None)
     )

@@ -5,7 +5,7 @@ Orchestrates extraction from Cursor databases, linking workspace metadata
 to global composer conversations, and storing normalized data.
 """
 import logging
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 from datetime import datetime
 
 from src.core.db import ChatDatabase
@@ -51,6 +51,8 @@ class ChatAggregator:
         - fullConversationHeadersOnly: list of {bubbleId, type} headers
         - Actual content stored separately as bubbleId:{composerId}:{bubbleId} keys
         
+        Uses batch query for efficiency when multiple bubbles need to be fetched.
+        
         Parameters
         ----
         composer_id : str
@@ -63,16 +65,20 @@ class ChatAggregator:
         List[Dict[str, Any]]
             List of full bubble objects with text/richText content
         """
-        conversation = []
+        # Extract all bubble IDs
+        bubble_ids = [header.get("bubbleId") for header in headers if header.get("bubbleId")]
         
+        # Batch fetch all bubbles in one query
+        bubbles_map = self.global_reader.read_bubbles_batch(composer_id, bubble_ids)
+        
+        # Build conversation list, preserving header order
+        conversation = []
         for header in headers:
             bubble_id = header.get("bubbleId")
             if not bubble_id:
                 continue
             
-            # Fetch full bubble content from separate key
-            bubble_data = self.global_reader.read_bubble(composer_id, bubble_id)
-            
+            bubble_data = bubbles_map.get(bubble_id)
             if bubble_data:
                 # Merge header info (type) with full bubble data
                 bubble = {**bubble_data}
@@ -238,19 +244,30 @@ class ChatAggregator:
         
         return chat
     
-    def _build_workspace_map(self) -> Dict[str, int]:
+    def _load_workspace_data(self) -> Tuple[Dict[str, int], Dict[str, Optional[int]], Dict[str, Dict[str, Any]]]:
         """
-        Build mapping from workspace_hash to workspace_id.
+        Load workspace data once and build all three mappings in a single pass.
+        
+        This method reads workspaces only once, avoiding redundant database opens.
         
         Returns
         ----
-        Dict[str, int]
-            Mapping of workspace_hash -> workspace_id
+        tuple[Dict[str, int], Dict[str, Optional[int]], Dict[str, Dict[str, Any]]]
+            Tuple of (workspace_map, composer_to_workspace, composer_heads)
+            - workspace_map: workspace_hash -> workspace_id
+            - composer_to_workspace: composer_id -> workspace_id (None if unknown)
+            - composer_heads: composer_id -> composer head metadata
         """
-        workspace_map = {}
+        # Read all workspaces once
         workspaces_metadata = self.workspace_reader.read_all_workspaces()
         
+        workspace_map = {}
+        composer_to_workspace = {}
+        composer_heads = {}
+        
+        # Build all three mappings in one pass
         for workspace_hash, metadata in workspaces_metadata.items():
+            # Build workspace map
             workspace = Workspace(
                 workspace_hash=workspace_hash,
                 folder_uri=metadata.get("project_path", ""),
@@ -258,49 +275,29 @@ class ChatAggregator:
             )
             workspace_id = self.db.upsert_workspace(workspace)
             workspace_map[workspace_hash] = workspace_id
-        
-        return workspace_map
-    
-    def _build_composer_to_workspace_map(self) -> Dict[str, Optional[int]]:
-        """
-        Build mapping from composer_id to workspace_id.
-        
-        Returns
-        ----
-        Dict[str, Optional[int]]
-            Mapping of composer_id -> workspace_id (None if unknown)
-        """
-        composer_to_workspace = {}
-        workspaces_metadata = self.workspace_reader.read_all_workspaces()
-        workspace_map = self._build_workspace_map()
-        
-        for workspace_hash, metadata in workspaces_metadata.items():
-            workspace_id = workspace_map.get(workspace_hash)
             
-            # Extract composer IDs from workspace metadata
-            composer_ids = self.workspace_reader.get_composer_ids_for_workspace(workspace_hash)
-            for composer_id in composer_ids:
-                composer_to_workspace[composer_id] = workspace_id
+            # Extract composer data from metadata (already loaded, no need to re-read)
+            composer_data = metadata.get("composer_data")
+            if composer_data and isinstance(composer_data, dict):
+                all_composers = composer_data.get("allComposers", [])
+                
+                for composer in all_composers:
+                    composer_id = composer.get("composerId")
+                    if composer_id:
+                        # Build composer_to_workspace map
+                        composer_to_workspace[composer_id] = workspace_id
+                        
+                        # Build composer_heads map
+                        composer_heads[composer_id] = {
+                            "name": composer.get("name"),
+                            "subtitle": composer.get("subtitle"),
+                            "createdAt": composer.get("createdAt"),
+                            "lastUpdatedAt": composer.get("lastUpdatedAt"),
+                            "unifiedMode": composer.get("unifiedMode"),
+                            "forceMode": composer.get("forceMode"),
+                        }
         
-        return composer_to_workspace
-    
-    def _build_composer_heads_map(self) -> Dict[str, Dict[str, Any]]:
-        """
-        Build mapping from composer_id to composer head metadata.
-        
-        Returns
-        ----
-        Dict[str, Dict[str, Any]]
-            Mapping of composer_id -> composer head (name, subtitle, etc.)
-        """
-        composer_heads = {}
-        workspaces_metadata = self.workspace_reader.read_all_workspaces()
-        
-        for workspace_hash, metadata in workspaces_metadata.items():
-            heads = self.workspace_reader.get_composer_heads_for_workspace(workspace_hash)
-            composer_heads.update(heads)
-        
-        return composer_heads
+        return workspace_map, composer_to_workspace, composer_heads
     
     def ingest_all(self, progress_callback: Optional[callable] = None) -> Dict[str, int]:
         """
@@ -318,13 +315,11 @@ class ChatAggregator:
         """
         logger.info("Starting chat ingestion from Cursor databases...")
         
-        # Build workspace and composer mappings
-        logger.info("Building workspace mappings...")
-        composer_to_workspace = self._build_composer_to_workspace_map()
-        
-        # Build composer heads map for title enrichment
-        logger.info("Building composer heads map...")
-        composer_heads = self._build_composer_heads_map()
+        # Load workspace data once and build all mappings
+        logger.info("Loading workspace data...")
+        workspace_map, composer_to_workspace, composer_heads = self._load_workspace_data()
+        logger.info("Loaded %d workspaces, %d composer mappings", 
+                   len(workspace_map), len(composer_to_workspace))
         
         # Stream composers from global database (don't materialize)
         logger.info("Streaming composers from global database...")
@@ -335,9 +330,9 @@ class ChatAggregator:
             import sqlite3
             conn = sqlite3.connect(str(self.global_reader.db_path))
             cursor = conn.cursor()
-            search_prefix = "composerData:".encode('utf-8')
-            hex_prefix = search_prefix.hex()
-            cursor.execute("SELECT COUNT(*) FROM cursorDiskKV WHERE hex(key) LIKE ?", (f"{hex_prefix}%",))
+            # Use range query with index for fast count
+            cursor.execute("SELECT COUNT(*) FROM cursorDiskKV WHERE key >= ? AND key < ?", 
+                         ("composerData:", "composerData;"))
             total = cursor.fetchone()[0]
             conn.close()
             logger.info("Found approximately %d composers to process", total)
