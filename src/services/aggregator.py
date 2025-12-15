@@ -9,7 +9,7 @@ from typing import List, Dict, Optional, Any, Tuple
 from datetime import datetime
 
 from src.core.db import ChatDatabase
-from src.core.models import Chat, Message, Workspace, ChatMode, MessageRole
+from src.core.models import Chat, Message, Workspace, ChatMode, MessageRole, MessageType
 from src.readers.workspace_reader import WorkspaceStateReader
 from src.readers.global_reader import GlobalComposerReader
 
@@ -91,6 +91,43 @@ class ChatAggregator:
                 conversation.append(header)
         
         return conversation
+    
+    def _classify_bubble(self, bubble: Dict[str, Any]) -> MessageType:
+        """
+        Classify a bubble by its content type.
+        
+        Parameters
+        ----
+        bubble : Dict[str, Any]
+            Raw bubble data from Cursor
+            
+        Returns
+        ----
+        MessageType
+            Classification of the bubble content
+        """
+        text = bubble.get("text", "")
+        rich_text = bubble.get("richText", "")
+        
+        # Has content -> response
+        if text or rich_text:
+            return MessageType.RESPONSE
+        
+        # Check for tool-related fields
+        # Cursor stores tool calls with various metadata fields
+        if (bubble.get("codeBlock") or 
+            bubble.get("toolFormerResult") or
+            bubble.get("toolCalls") or
+            bubble.get("toolCall")):
+            return MessageType.TOOL_CALL
+        
+        # Check for thinking/reasoning metadata
+        # This is less common but may exist in some formats
+        if bubble.get("thinking") or bubble.get("reasoning"):
+            return MessageType.THINKING
+        
+        # Default empty
+        return MessageType.EMPTY
     
     def _convert_composer_to_chat(self, composer_data: Dict[str, Any], 
                                    workspace_id: Optional[int] = None,
@@ -207,6 +244,9 @@ class ChatAggregator:
             text = bubble.get("text", "")
             rich_text = bubble.get("richText", "")
             
+            # Classify the bubble type
+            message_type = self._classify_bubble(bubble)
+            
             # Extract timestamp
             msg_created_at = None
             if bubble.get("createdAt"):
@@ -222,6 +262,7 @@ class ChatAggregator:
                 created_at=msg_created_at or created_at,  # Fallback to chat created_at
                 cursor_bubble_id=bubble.get("bubbleId"),
                 raw_json=bubble,
+                message_type=message_type,
             )
             messages.append(message)
             

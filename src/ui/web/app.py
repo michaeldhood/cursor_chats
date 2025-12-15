@@ -28,21 +28,23 @@ def index():
     try:
         search_service = ChatSearchService(db)
         
-        # Get pagination params
+        # Get pagination and filter params
         page = int(request.args.get('page', 1))
         limit = 50
         offset = (page - 1) * limit
+        empty_filter = request.args.get('filter', None)  # 'empty', 'non_empty', or None
         
-        chats = search_service.list_chats(limit=limit, offset=offset)
+        chats = search_service.list_chats(limit=limit, offset=offset, empty_filter=empty_filter)
         
-        # Get total count using COUNT query
-        total_chats = search_service.count_chats()
+        # Get total count using COUNT query with filter
+        total_chats = search_service.count_chats(empty_filter=empty_filter)
         
         return render_template('index.html', 
                              chats=chats, 
                              page=page, 
                              total_chats=total_chats,
-                             has_next=len(chats) == limit)
+                             has_next=len(chats) == limit,
+                             current_filter=empty_filter)
     finally:
         db.close()
 
@@ -87,6 +89,42 @@ def chat_detail(chat_id):
         if not chat:
             return "Chat not found", 404
         
+        # Process messages to group tool calls and filter empty
+        processed_messages = []
+        tool_call_group = []
+        
+        for msg in chat.get('messages', []):
+            msg_type = msg.get('message_type', 'response')
+            
+            if msg_type == 'empty':
+                # Skip empty messages
+                continue
+            elif msg_type == 'tool_call':
+                # Accumulate tool calls
+                tool_call_group.append(msg)
+            else:
+                # Flush any accumulated tool calls before this message
+                if tool_call_group:
+                    processed_messages.append({
+                        'type': 'tool_call_group',
+                        'tool_calls': tool_call_group.copy()
+                    })
+                    tool_call_group = []
+                # Add the regular message
+                processed_messages.append({
+                    'type': 'message',
+                    'data': msg
+                })
+        
+        # Flush any remaining tool calls at the end
+        if tool_call_group:
+            processed_messages.append({
+                'type': 'tool_call_group',
+                'tool_calls': tool_call_group
+            })
+        
+        chat['processed_messages'] = processed_messages
+        
         return render_template('chat_detail.html', chat=chat)
     finally:
         db.close()
@@ -102,13 +140,15 @@ def api_chats():
         page = int(request.args.get('page', 1))
         limit = int(request.args.get('limit', 50))
         offset = (page - 1) * limit
+        empty_filter = request.args.get('filter', None)
         
-        chats = search_service.list_chats(limit=limit, offset=offset)
+        chats = search_service.list_chats(limit=limit, offset=offset, empty_filter=empty_filter)
         
         return jsonify({
             'chats': chats,
             'page': page,
-            'limit': limit
+            'limit': limit,
+            'filter': empty_filter
         })
     finally:
         db.close()

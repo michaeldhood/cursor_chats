@@ -26,6 +26,14 @@ class MessageRole(str, Enum):
     SYSTEM = "system"
 
 
+class MessageType(str, Enum):
+    """Message content type classification."""
+    RESPONSE = "response"      # Actual text content
+    TOOL_CALL = "tool_call"    # Tool invocation (empty text)
+    THINKING = "thinking"      # Reasoning trace
+    EMPTY = "empty"            # Unknown empty bubble
+
+
 @dataclass
 class Workspace:
     """Represents a Cursor workspace."""
@@ -58,6 +66,7 @@ class Message:
     created_at: Optional[datetime] = None
     cursor_bubble_id: Optional[str] = None
     raw_json: Optional[Dict[str, Any]] = None
+    message_type: MessageType = MessageType.RESPONSE
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for database storage."""
@@ -69,6 +78,7 @@ class Message:
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "cursor_bubble_id": self.cursor_bubble_id,
             "raw_json": json.dumps(self.raw_json) if self.raw_json else None,
+            "message_type": self.message_type.value,
         }
 
 

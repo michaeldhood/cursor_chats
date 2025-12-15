@@ -2,6 +2,73 @@
 
 {% block title %}{{ chat.title }} - Cursor Chats{% endblock %}
 
+{% block extra_head %}
+<style>
+    .tool-call-group {
+        margin-bottom: 16px;
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+        background: #fafafa;
+    }
+    
+    .tool-call-header {
+        padding: 8px 12px;
+        cursor: pointer;
+        user-select: none;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.9em;
+        color: #666;
+        background: #f5f5f5;
+        border-bottom: 1px solid #e0e0e0;
+    }
+    
+    .tool-call-header:hover {
+        background: #eeeeee;
+    }
+    
+    .tool-call-header::before {
+        content: "▶";
+        font-size: 0.7em;
+        transition: transform 0.2s;
+    }
+    
+    .tool-call-header.expanded::before {
+        transform: rotate(90deg);
+    }
+    
+    .tool-call-content {
+        display: none;
+        padding: 12px;
+    }
+    
+    .tool-call-content.expanded {
+        display: block;
+    }
+    
+    .tool-call-item {
+        padding: 8px;
+        margin-bottom: 8px;
+        background: white;
+        border-radius: 3px;
+        font-size: 0.85em;
+        color: #888;
+    }
+    
+    .tool-call-item:last-child {
+        margin-bottom: 0;
+    }
+</style>
+<script>
+    function toggleToolCalls(element) {
+        const content = element.nextElementSibling;
+        element.classList.toggle('expanded');
+        content.classList.toggle('expanded');
+    }
+</script>
+{% endblock %}
+
 {% block content %}
 <div style="background: white; padding: 24px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
     <h2>{{ chat.title or 'Untitled Chat' }}</h2>
@@ -26,16 +93,43 @@
     
     <div style="margin-top: 32px;">
         <h3>Messages</h3>
-        {% for msg in chat.messages %}
-        <div class="message {{ msg.role }}">
-            <div class="message-header">
-                {{ msg.role|title }}
-                {% if msg.created_at %}
-                <span style="color: #999; font-size: 0.9em; margin-left: 12px;">{{ msg.created_at[:19] }}</span>
-                {% endif %}
-            </div>
-            <div class="message-content">{{ msg.text or msg.rich_text or '' }}</div>
-        </div>
+        {% for item in chat.processed_messages %}
+            {% if item.type == 'tool_call_group' %}
+                <div class="tool-call-group">
+                    <div class="tool-call-header" onclick="toggleToolCalls(this)">
+                        🔧 {{ item.tool_calls|length }} tool call{{ 's' if item.tool_calls|length != 1 else '' }}
+                    </div>
+                    <div class="tool-call-content">
+                        {% for tool_msg in item.tool_calls %}
+                        <div class="tool-call-item">
+                            <strong>{{ tool_msg.role|title }}</strong>
+                            {% if tool_msg.created_at %}
+                            <span style="color: #999; font-size: 0.85em; margin-left: 8px;">{{ tool_msg.created_at[:19] }}</span>
+                            {% endif %}
+                            {% if tool_msg.bubble_id %}
+                            <div style="margin-top: 4px; font-family: monospace; font-size: 0.8em; color: #999;">
+                                Bubble ID: {{ tool_msg.bubble_id }}
+                            </div>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            {% elif item.type == 'message' %}
+                {% set msg = item.data %}
+                <div class="message {{ msg.role }}">
+                    <div class="message-header">
+                        {{ msg.role|title }}
+                        {% if msg.message_type == 'thinking' %}
+                        <span style="color: #999; font-size: 0.85em; margin-left: 8px;">🧠 Thinking</span>
+                        {% endif %}
+                        {% if msg.created_at %}
+                        <span style="color: #999; font-size: 0.9em; margin-left: 12px;">{{ msg.created_at[:19] }}</span>
+                        {% endif %}
+                    </div>
+                    <div class="message-content">{{ msg.text or msg.rich_text or '' }}</div>
+                </div>
+            {% endif %}
         {% endfor %}
     </div>
 </div>

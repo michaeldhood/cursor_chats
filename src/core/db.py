@@ -97,9 +97,17 @@ class ChatDatabase:
                 created_at TEXT,
                 last_updated_at TEXT,
                 source TEXT DEFAULT 'cursor',
+                messages_count INTEGER DEFAULT 0,
                 FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
             )
         """)
+        
+        # Migration: Add messages_count column if it doesn't exist
+        cursor.execute("PRAGMA table_info(chats)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if 'messages_count' not in columns:
+            cursor.execute("ALTER TABLE chats ADD COLUMN messages_count INTEGER DEFAULT 0")
+            logger.info("Added messages_count column to chats table")
         
         # Messages table
         cursor.execute("""
@@ -112,9 +120,17 @@ class ChatDatabase:
                 created_at TEXT,
                 cursor_bubble_id TEXT,
                 raw_json TEXT,
+                message_type TEXT DEFAULT 'response',
                 FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
             )
         """)
+        
+        # Migration: Add message_type column if it doesn't exist
+        cursor.execute("PRAGMA table_info(messages)")
+        message_columns = [row[1] for row in cursor.fetchall()]
+        if 'message_type' not in message_columns:
+            cursor.execute("ALTER TABLE messages ADD COLUMN message_type TEXT DEFAULT 'response'")
+            logger.info("Added message_type column to messages table")
         
         # Chat files (relevant files per chat)
         cursor.execute("""
@@ -252,12 +268,15 @@ class ChatDatabase:
         cursor.execute("SELECT id FROM chats WHERE cursor_composer_id = ?", (chat.cursor_composer_id,))
         row = cursor.fetchone()
         
+        # Calculate message count
+        messages_count = len(chat.messages)
+        
         if row:
             chat_id = row[0]
             # Update chat metadata
             cursor.execute("""
                 UPDATE chats 
-                SET workspace_id = ?, title = ?, mode = ?, created_at = ?, last_updated_at = ?, source = ?
+                SET workspace_id = ?, title = ?, mode = ?, created_at = ?, last_updated_at = ?, source = ?, messages_count = ?
                 WHERE id = ?
             """, (
                 chat.workspace_id,
@@ -266,6 +285,7 @@ class ChatDatabase:
                 chat.created_at.isoformat() if chat.created_at else None,
                 chat.last_updated_at.isoformat() if chat.last_updated_at else None,
                 chat.source,
+                messages_count,
                 chat_id
             ))
             # Delete old messages
@@ -274,8 +294,8 @@ class ChatDatabase:
         else:
             # Insert
             cursor.execute("""
-                INSERT INTO chats (cursor_composer_id, workspace_id, title, mode, created_at, last_updated_at, source)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO chats (cursor_composer_id, workspace_id, title, mode, created_at, last_updated_at, source, messages_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 chat.cursor_composer_id,
                 chat.workspace_id,
@@ -284,14 +304,15 @@ class ChatDatabase:
                 chat.created_at.isoformat() if chat.created_at else None,
                 chat.last_updated_at.isoformat() if chat.last_updated_at else None,
                 chat.source,
+                messages_count,
             ))
             chat_id = cursor.lastrowid
         
         # Insert messages
         for msg in chat.messages:
             cursor.execute("""
-                INSERT INTO messages (chat_id, role, text, rich_text, created_at, cursor_bubble_id, raw_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO messages (chat_id, role, text, rich_text, created_at, cursor_bubble_id, raw_json, message_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 chat_id,
                 msg.role.value,
@@ -300,6 +321,7 @@ class ChatDatabase:
                 msg.created_at.isoformat() if msg.created_at else None,
                 msg.cursor_bubble_id,
                 json.dumps(msg.raw_json) if msg.raw_json else None,
+                msg.message_type.value,
             ))
         
         # Insert relevant files
@@ -333,7 +355,7 @@ class ChatDatabase:
         cursor = self.conn.cursor()
         
         cursor.execute("""
-            SELECT DISTINCT c.id, c.cursor_composer_id, c.title, c.mode, c.created_at, c.source,
+            SELECT DISTINCT c.id, c.cursor_composer_id, c.title, c.mode, c.created_at, c.source, c.messages_count,
                    w.workspace_hash, w.resolved_path
             FROM chats c
             LEFT JOIN workspaces w ON c.workspace_id = w.id
@@ -352,8 +374,9 @@ class ChatDatabase:
                 "mode": row[3],
                 "created_at": row[4],
                 "source": row[5],
-                "workspace_hash": row[6],
-                "workspace_path": row[7],
+                "messages_count": row[6] if len(row) > 6 else 0,
+                "workspace_hash": row[7] if len(row) > 7 else None,
+                "workspace_path": row[8] if len(row) > 8 else None,
             })
         
         return results
@@ -374,9 +397,11 @@ class ChatDatabase:
         """
         cursor = self.conn.cursor()
         
-        # Get chat
+        # Get chat - explicitly select columns to handle schema migration
         cursor.execute("""
-            SELECT c.*, w.workspace_hash, w.resolved_path
+            SELECT c.id, c.cursor_composer_id, c.workspace_id, c.title, c.mode, 
+                   c.created_at, c.last_updated_at, c.source, c.messages_count,
+                   w.workspace_hash, w.resolved_path
             FROM chats c
             LEFT JOIN workspaces w ON c.workspace_id = w.id
             WHERE c.id = ?
@@ -395,15 +420,16 @@ class ChatDatabase:
             "created_at": row[5],
             "last_updated_at": row[6],
             "source": row[7],
-            "workspace_hash": row[8],
-            "workspace_path": row[9],
+            "messages_count": row[8] if len(row) > 8 else 0,  # Handle migration case
+            "workspace_hash": row[9] if len(row) > 9 else None,
+            "workspace_path": row[10] if len(row) > 10 else None,
             "messages": [],
             "files": [],
         }
         
         # Get messages
         cursor.execute("""
-            SELECT role, text, rich_text, created_at, cursor_bubble_id
+            SELECT role, text, rich_text, created_at, cursor_bubble_id, message_type
             FROM messages
             WHERE chat_id = ?
             ORDER BY created_at ASC
@@ -416,6 +442,7 @@ class ChatDatabase:
                 "rich_text": msg_row[2],
                 "created_at": msg_row[3],
                 "bubble_id": msg_row[4],
+                "message_type": msg_row[5] if len(msg_row) > 5 else "response",  # Handle migration case
             })
         
         # Get files
@@ -424,14 +451,16 @@ class ChatDatabase:
         
         return chat_data
     
-    def count_chats(self, workspace_id: Optional[int] = None) -> int:
+    def count_chats(self, workspace_id: Optional[int] = None, empty_filter: Optional[str] = None) -> int:
         """
-        Count total chats, optionally filtered by workspace.
+        Count total chats, optionally filtered by workspace and empty status.
         
         Parameters
         ----
         workspace_id : int, optional
             Filter by workspace
+        empty_filter : str, optional
+            Filter by empty status: 'empty' (messages_count = 0), 'non_empty' (messages_count > 0), or None (all)
             
         Returns
         ----
@@ -440,11 +469,23 @@ class ChatDatabase:
         """
         cursor = self.conn.cursor()
         
-        if workspace_id:
-            cursor.execute("SELECT COUNT(*) FROM chats WHERE workspace_id = ?", (workspace_id,))
-        else:
-            cursor.execute("SELECT COUNT(*) FROM chats")
+        conditions = []
+        params = []
         
+        if workspace_id:
+            conditions.append("workspace_id = ?")
+            params.append(workspace_id)
+        
+        if empty_filter == 'empty':
+            conditions.append("messages_count = 0")
+        elif empty_filter == 'non_empty':
+            conditions.append("messages_count > 0")
+        
+        query = "SELECT COUNT(*) FROM chats"
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        
+        cursor.execute(query, params)
         return cursor.fetchone()[0]
     
     def count_search(self, query: str) -> int:
@@ -472,7 +513,8 @@ class ChatDatabase:
         
         return cursor.fetchone()[0]
     
-    def list_chats(self, workspace_id: Optional[int] = None, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    def list_chats(self, workspace_id: Optional[int] = None, limit: int = 100, offset: int = 0, 
+                   empty_filter: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         List chats with optional filtering.
         
@@ -484,6 +526,8 @@ class ChatDatabase:
             Maximum number of results
         offset : int
             Offset for pagination
+        empty_filter : str, optional
+            Filter by empty status: 'empty' (messages_count = 0), 'non_empty' (messages_count > 0), or None (all)
             
         Returns
         ----
@@ -492,25 +536,34 @@ class ChatDatabase:
         """
         cursor = self.conn.cursor()
         
+        conditions = []
+        params = []
+        
         if workspace_id:
-            cursor.execute("""
-                SELECT c.id, c.cursor_composer_id, c.title, c.mode, c.created_at, c.source,
-                       w.workspace_hash, w.resolved_path
-                FROM chats c
-                LEFT JOIN workspaces w ON c.workspace_id = w.id
-                WHERE c.workspace_id = ?
-                ORDER BY c.created_at DESC
-                LIMIT ? OFFSET ?
-            """, (workspace_id, limit, offset))
-        else:
-            cursor.execute("""
-                SELECT c.id, c.cursor_composer_id, c.title, c.mode, c.created_at, c.source,
-                       w.workspace_hash, w.resolved_path
-                FROM chats c
-                LEFT JOIN workspaces w ON c.workspace_id = w.id
-                ORDER BY c.created_at DESC
-                LIMIT ? OFFSET ?
-            """, (limit, offset))
+            conditions.append("c.workspace_id = ?")
+            params.append(workspace_id)
+        
+        if empty_filter == 'empty':
+            conditions.append("c.messages_count = 0")
+        elif empty_filter == 'non_empty':
+            conditions.append("c.messages_count > 0")
+        
+        where_clause = ""
+        if conditions:
+            where_clause = "WHERE " + " AND ".join(conditions)
+        
+        query = f"""
+            SELECT c.id, c.cursor_composer_id, c.title, c.mode, c.created_at, c.source, c.messages_count,
+                   w.workspace_hash, w.resolved_path
+            FROM chats c
+            LEFT JOIN workspaces w ON c.workspace_id = w.id
+            {where_clause}
+            ORDER BY c.created_at DESC
+            LIMIT ? OFFSET ?
+        """
+        
+        params.extend([limit, offset])
+        cursor.execute(query, params)
         
         results = []
         for row in cursor.fetchall():
@@ -521,8 +574,9 @@ class ChatDatabase:
                 "mode": row[3],
                 "created_at": row[4],
                 "source": row[5],
-                "workspace_hash": row[6],
-                "workspace_path": row[7],
+                "messages_count": row[6],
+                "workspace_hash": row[7],
+                "workspace_path": row[8],
             })
         
         return results

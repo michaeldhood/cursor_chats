@@ -2,14 +2,81 @@
 
 {% block title %}All Chats - Cursor Chats{% endblock %}
 
+{% block extra_head %}
+<style>
+    .filter-controls {
+        background: white;
+        padding: 16px 20px;
+        margin-bottom: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    
+    .filter-controls label {
+        font-weight: 500;
+        color: #666;
+    }
+    
+    .filter-controls select {
+        padding: 6px 12px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+        background: white;
+        cursor: pointer;
+    }
+    
+    .filter-controls select:hover {
+        border-color: #0066cc;
+    }
+    
+    .chat-item.empty-chat {
+        border-left: 4px solid #ff9800;
+    }
+    
+    .chat-item.empty-chat h3::before {
+        content: "⚠ ";
+        color: #ff9800;
+    }
+    
+    .messages-count {
+        font-weight: 500;
+    }
+    
+    .messages-count.empty {
+        color: #d32f2f;
+    }
+    
+    .messages-count.non-empty {
+        color: #666;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
+<div class="filter-controls">
+    <label for="filter">Filter:</label>
+    <select id="filter" onchange="window.location.href='{{ url_for('index') }}?filter=' + (this.value || '')">
+        <option value="" {% if not current_filter %}selected{% endif %}>All chats</option>
+        <option value="empty" {% if current_filter == 'empty' %}selected{% endif %}>Empty only</option>
+        <option value="non_empty" {% if current_filter == 'non_empty' %}selected{% endif %}>Non-empty only</option>
+    </select>
+    <span style="color: #666; margin-left: auto;">Total: {{ total_chats }} chats</span>
+</div>
+
 <div class="chat-list">
     {% if chats %}
         {% for chat in chats %}
-        <div class="chat-item">
+        <div class="chat-item {% if (chat.messages_count or 0) == 0 %}empty-chat{% endif %}">
             <h3><a href="{{ url_for('chat_detail', chat_id=chat.id) }}">{{ chat.title or 'Untitled Chat' }}</a></h3>
             <div class="chat-meta">
                 <span class="badge {{ chat.mode }}">{{ chat.mode }}</span>
+                <span class="messages-count {% if (chat.messages_count or 0) == 0 %}empty{% else %}non-empty{% endif %}">
+                    {{ chat.messages_count or 0 }} message{{ 's' if (chat.messages_count or 0) != 1 else '' }}
+                </span>
                 <span>Created: {{ chat.created_at[:10] if chat.created_at else 'Unknown' }}</span>
                 {% if chat.workspace_path %}
                 <span>Workspace: {{ chat.workspace_path }}</span>
@@ -19,7 +86,7 @@
         {% endfor %}
     {% else %}
         <div class="chat-item">
-            <p>No chats found. Run <code>python -m src ingest</code> to import chats from Cursor.</p>
+            <p>No chats found{% if current_filter %} matching the filter{% endif %}. Run <code>python -m src ingest</code> to import chats from Cursor.</p>
         </div>
     {% endif %}
 </div>
@@ -27,11 +94,11 @@
 {% if total_chats > 50 %}
 <div class="pagination">
     {% if page > 1 %}
-    <a href="{{ url_for('index', page=page-1) }}">Previous</a>
+    <a href="{{ url_for('index', page=page-1, filter=current_filter or '') }}">Previous</a>
     {% endif %}
     <span class="current">{{ page }}</span>
     {% if has_next %}
-    <a href="{{ url_for('index', page=page+1) }}">Next</a>
+    <a href="{{ url_for('index', page=page+1, filter=current_filter or '') }}">Next</a>
     {% endif %}
 </div>
 {% endif %}

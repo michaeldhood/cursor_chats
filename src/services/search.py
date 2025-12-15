@@ -46,9 +46,10 @@ class ChatSearchService:
         return self.db.search_chats(query, limit, offset)
     
     def list_chats(self, workspace_id: Optional[int] = None, 
-                   limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+                   limit: int = 100, offset: int = 0,
+                   empty_filter: Optional[str] = None) -> List[Dict[str, Any]]:
         """
-        List chats with optional workspace filter.
+        List chats with optional workspace and empty status filters.
         
         Parameters
         ----
@@ -58,13 +59,15 @@ class ChatSearchService:
             Maximum number of results
         offset : int
             Offset for pagination
+        empty_filter : str, optional
+            Filter by empty status: 'empty' (messages_count = 0), 'non_empty' (messages_count > 0), or None (all)
             
         Returns
         ----
         List[Dict[str, Any]]
             List of chats
         """
-        return self.db.list_chats(workspace_id, limit, offset)
+        return self.db.list_chats(workspace_id, limit, offset, empty_filter)
     
     def get_chat(self, chat_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -82,21 +85,23 @@ class ChatSearchService:
         """
         return self.db.get_chat(chat_id)
     
-    def count_chats(self, workspace_id: Optional[int] = None) -> int:
+    def count_chats(self, workspace_id: Optional[int] = None, empty_filter: Optional[str] = None) -> int:
         """
-        Count total chats, optionally filtered by workspace.
+        Count total chats, optionally filtered by workspace and empty status.
         
         Parameters
         ----
         workspace_id : int, optional
             Filter by workspace
+        empty_filter : str, optional
+            Filter by empty status: 'empty' (messages_count = 0), 'non_empty' (messages_count > 0), or None (all)
             
         Returns
         ----
         int
             Total count
         """
-        return self.db.count_chats(workspace_id)
+        return self.db.count_chats(workspace_id, empty_filter)
     
     def count_search(self, query: str) -> int:
         """
