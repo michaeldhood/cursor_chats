@@ -12,6 +12,7 @@ from src.core.db import ChatDatabase
 from src.core.models import Chat, Message, Workspace, ChatMode, MessageRole, MessageType
 from src.readers.workspace_reader import WorkspaceStateReader
 from src.readers.global_reader import GlobalComposerReader
+from src.readers.claude_reader import ClaudeReader
 
 logger = logging.getLogger(__name__)
 
@@ -417,6 +418,194 @@ class ChatAggregator:
         
         logger.info("Ingestion complete: %d ingested, %d skipped, %d errors", 
                    stats["ingested"], stats["skipped"], stats["errors"])
+        
+        return stats
+    
+    def _convert_claude_to_chat(self, conversation_data: Dict[str, Any]) -> Optional[Chat]:
+        """
+        Convert Claude.ai conversation data to Chat domain model.
+        
+        Parameters
+        ----
+        conversation_data : Dict[str, Any]
+            Raw conversation data from Claude.ai API
+            
+        Returns
+        ----
+        Chat
+            Chat domain model, or None if conversion fails
+        """
+        conv_id = conversation_data.get("uuid")
+        if not conv_id:
+            return None
+        
+        # Extract title
+        title = conversation_data.get("name") or conversation_data.get("summary") or "Untitled Chat"
+        
+        # Extract timestamps
+        created_at = None
+        if conversation_data.get("created_at"):
+            try:
+                # Parse ISO format timestamp
+                created_at_str = conversation_data["created_at"]
+                if created_at_str.endswith('Z'):
+                    created_at_str = created_at_str[:-1] + '+00:00'
+                created_at = datetime.fromisoformat(created_at_str)
+            except (ValueError, TypeError) as e:
+                logger.debug("Could not parse created_at: %s", e)
+        
+        last_updated_at = None
+        if conversation_data.get("updated_at"):
+            try:
+                updated_at_str = conversation_data["updated_at"]
+                if updated_at_str.endswith('Z'):
+                    updated_at_str = updated_at_str[:-1] + '+00:00'
+                last_updated_at = datetime.fromisoformat(updated_at_str)
+            except (ValueError, TypeError) as e:
+                logger.debug("Could not parse updated_at: %s", e)
+        
+        # Extract messages
+        messages = []
+        chat_messages = conversation_data.get("chat_messages", [])
+        
+        for msg_data in chat_messages:
+            # Map sender to role
+            sender = msg_data.get("sender", "")
+            if sender == "human":
+                role = MessageRole.USER
+            elif sender == "assistant":
+                role = MessageRole.ASSISTANT
+            else:
+                # Skip unknown sender types
+                continue
+            
+            # Extract text content
+            text = ""
+            rich_text = ""
+            content = msg_data.get("content", [])
+            
+            # Claude stores content as array of content blocks
+            for content_block in content:
+                if content_block.get("type") == "text":
+                    block_text = content_block.get("text", "")
+                    if block_text:
+                        if text:
+                            text += "\n\n" + block_text
+                        else:
+                            text = block_text
+            
+            # If no text content, check for other content types
+            if not text:
+                # Check if there's a text field directly on the message
+                text = msg_data.get("text", "")
+            
+            # Extract timestamp
+            msg_created_at = None
+            if msg_data.get("created_at"):
+                try:
+                    created_at_str = msg_data["created_at"]
+                    if created_at_str.endswith('Z'):
+                        created_at_str = created_at_str[:-1] + '+00:00'
+                    msg_created_at = datetime.fromisoformat(created_at_str)
+                except (ValueError, TypeError):
+                    pass
+            
+            # Classify message type
+            message_type = MessageType.RESPONSE if text else MessageType.EMPTY
+            
+            message = Message(
+                role=role,
+                text=text,
+                rich_text=rich_text,
+                created_at=msg_created_at or created_at,
+                cursor_bubble_id=msg_data.get("uuid"),
+                raw_json=msg_data,
+                message_type=message_type,
+            )
+            messages.append(message)
+        
+        # Extract model (store in mode field for now, could add separate field later)
+        model = conversation_data.get("model")
+        mode = ChatMode.CHAT  # Claude conversations are always chat mode
+        
+        # Create chat
+        chat = Chat(
+            cursor_composer_id=conv_id,  # Reuse this field for Claude conversation ID
+            workspace_id=None,  # Claude conversations don't have workspaces
+            title=title,
+            mode=mode,
+            created_at=created_at,
+            last_updated_at=last_updated_at,
+            source="claude.ai",
+            messages=messages,
+            relevant_files=[],  # Claude API doesn't expose relevant files in this format
+        )
+        
+        return chat
+    
+    def ingest_claude(self, progress_callback: Optional[callable] = None) -> Dict[str, int]:
+        """
+        Ingest chats from Claude.ai via dlt.
+        
+        Parameters
+        ----
+        progress_callback : callable, optional
+            Callback function(conversation_id, total, current) for progress updates
+            
+        Returns
+        ----
+        Dict[str, int]
+            Statistics: {"ingested": count, "skipped": count, "errors": count}
+        """
+        logger.info("Starting Claude.ai chat ingestion...")
+        
+        try:
+            claude_reader = ClaudeReader()
+        except ValueError as e:
+            logger.error("Claude reader initialization failed: %s", e)
+            logger.error("Please configure CLAUDE_ORG_ID and CLAUDE_SESSION_COOKIE")
+            return {"ingested": 0, "skipped": 0, "errors": 1}
+        
+        stats = {"ingested": 0, "skipped": 0, "errors": 0}
+        
+        try:
+            # Get total count for progress (optional)
+            # Claude API doesn't provide a count endpoint, so we'll track as we go
+            conversations = list(claude_reader.read_all_conversations())
+            total = len(conversations)
+            logger.info("Found %d Claude conversations to process", total)
+            
+            # Process each conversation
+            for idx, conversation_data in enumerate(conversations, 1):
+                conv_id = conversation_data.get("uuid", f"unknown-{idx}")
+                
+                if progress_callback and total:
+                    progress_callback(conv_id, total, idx)
+                
+                try:
+                    # Convert to domain model
+                    chat = self._convert_claude_to_chat(conversation_data)
+                    if not chat:
+                        stats["skipped"] += 1
+                        continue
+                    
+                    # Store in database
+                    self.db.upsert_chat(chat)
+                    stats["ingested"] += 1
+                    
+                    if idx % 50 == 0:
+                        logger.info("Processed %d/%d Claude conversations...", idx, total)
+                        
+                except Exception as e:
+                    logger.error("Error processing Claude conversation %s: %s", conv_id, e)
+                    stats["errors"] += 1
+            
+            logger.info("Claude ingestion complete: %d ingested, %d skipped, %d errors",
+                       stats["ingested"], stats["skipped"], stats["errors"])
+            
+        except Exception as e:
+            logger.error("Error during Claude ingestion: %s", e)
+            stats["errors"] += 1
         
         return stats
 

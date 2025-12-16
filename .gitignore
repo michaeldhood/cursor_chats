@@ -26,3 +26,7 @@ chats.db
 # User data directory (cursor-chats app data)
 **/cursor-chats/chats.db
 **/Application Support/cursor-chats/
+
+# dlt secrets and pipeline state
+.dlt/secrets.toml
+.dlt/pipelines/

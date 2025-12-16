@@ -80,6 +80,8 @@ def create_parser() -> argparse.ArgumentParser:
     ingest_parser = subparsers.add_parser('ingest', help='Ingest chats from Cursor databases into local DB')
     ingest_parser.add_argument('--db-path', type=str, 
                               help='Path to database file (default: OS-specific location)')
+    ingest_parser.add_argument('--source', choices=['cursor', 'claude', 'all'], default='cursor',
+                              help='Source to ingest from: cursor (default), claude, or all')
     
     # Import-legacy command (NEW)
     import_parser = subparsers.add_parser('import-legacy', help='Import legacy chat_data_*.json files')
@@ -711,26 +713,67 @@ def ingest_command(args: argparse.Namespace) -> int:
     Returns:
         Exit code (0 for success, non-zero for error)
     """
-    logger.info("Ingesting chats from Cursor databases...")
-    
     db_path = args.db_path or os.getenv('CURSOR_CHATS_DB_PATH')
     db = ChatDatabase(db_path)
     
     try:
         aggregator = ChatAggregator(db)
         
-        def progress_callback(composer_id, total, current):
-            if current % 100 == 0 or current == total:
-                logger.info("Progress: %d/%d composers processed...", current, total)
+        total_stats = {"ingested": 0, "skipped": 0, "errors": 0}
         
-        stats = aggregator.ingest_all(progress_callback)
+        # Determine which sources to ingest
+        sources_to_ingest = []
+        if args.source == "cursor" or args.source == "all":
+            sources_to_ingest.append("cursor")
+        if args.source == "claude" or args.source == "all":
+            sources_to_ingest.append("claude")
         
-        logger.info("\nIngestion complete!")
-        logger.info("  Ingested: %d chats", stats["ingested"])
-        logger.info("  Skipped: %d chats", stats["skipped"])
-        logger.info("  Errors: %d chats", stats["errors"])
+        # Ingest from each source
+        for source in sources_to_ingest:
+            if source == "cursor":
+                logger.info("Ingesting chats from Cursor databases...")
+                
+                def progress_callback(composer_id, total, current):
+                    if current % 100 == 0 or current == total:
+                        logger.info("Progress: %d/%d composers processed...", current, total)
+                
+                stats = aggregator.ingest_all(progress_callback)
+                
+                logger.info("\nCursor ingestion complete!")
+                logger.info("  Ingested: %d chats", stats["ingested"])
+                logger.info("  Skipped: %d chats", stats["skipped"])
+                logger.info("  Errors: %d chats", stats["errors"])
+                
+                total_stats["ingested"] += stats["ingested"]
+                total_stats["skipped"] += stats["skipped"]
+                total_stats["errors"] += stats["errors"]
+                
+            elif source == "claude":
+                logger.info("Ingesting chats from Claude.ai...")
+                
+                def claude_progress_callback(conv_id, total, current):
+                    if current % 50 == 0 or current == total:
+                        logger.info("Progress: %d/%d conversations processed...", current, total)
+                
+                stats = aggregator.ingest_claude(claude_progress_callback)
+                
+                logger.info("\nClaude.ai ingestion complete!")
+                logger.info("  Ingested: %d chats", stats["ingested"])
+                logger.info("  Skipped: %d chats", stats["skipped"])
+                logger.info("  Errors: %d chats", stats["errors"])
+                
+                total_stats["ingested"] += stats["ingested"]
+                total_stats["skipped"] += stats["skipped"]
+                total_stats["errors"] += stats["errors"]
         
-        return 0 if stats["errors"] == 0 else 1
+        # Summary
+        if len(sources_to_ingest) > 1:
+            logger.info("\n=== Total Ingestion Summary ===")
+            logger.info("  Total ingested: %d chats", total_stats["ingested"])
+            logger.info("  Total skipped: %d chats", total_stats["skipped"])
+            logger.info("  Total errors: %d chats", total_stats["errors"])
+        
+        return 0 if total_stats["errors"] == 0 else 1
         
     except Exception as e:
         # Include a traceback to make diagnosing Cursor DB edge cases easier.
