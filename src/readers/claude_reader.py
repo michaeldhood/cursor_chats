@@ -248,7 +248,8 @@ class ClaudeReader:
             count = 0
             for load_package in load_info.load_packages:
                 for job in load_package.jobs:
-                    file_path_str = job.job_file_info.file_path
+                    # file_path is directly on job, not on job_file_info
+                    file_path_str = job.file_path
                     if not file_path_str:
                         continue
                     
