@@ -4,43 +4,131 @@
 
 {% block extra_head %}
 <style>
-    .tool-call-group {
-        margin-bottom: 16px;
-        border: 1px solid #e0e0e0;
+    .chat-container {
+        background: var(--bg-secondary);
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
+        overflow: hidden;
+    }
+    
+    .chat-header {
+        padding: 24px;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .chat-header h2 {
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 12px;
+    }
+    
+    .chat-header .edit-link {
+        font-size: 13px;
+        color: var(--accent-blue);
+        text-decoration: none;
+        margin-left: 12px;
+    }
+    
+    .chat-header .edit-link:hover {
+        text-decoration: underline;
+    }
+    
+    .files-section {
+        margin: 20px 24px;
+        padding: 16px;
+        background: var(--bg-tertiary);
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+    }
+    
+    .files-section strong {
+        display: block;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--text-secondary);
+        margin-bottom: 12px;
+    }
+    
+    .files-section ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+    
+    .files-section li {
+        padding: 6px 0;
+    }
+    
+    .files-section code {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 13px;
+        color: var(--accent-orange);
+        background: rgba(206, 145, 120, 0.1);
+        padding: 3px 8px;
         border-radius: 4px;
-        background: #fafafa;
+    }
+    
+    .messages-container {
+        padding: 24px;
+    }
+    
+    .messages-container > h3 {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--text-secondary);
+        margin-bottom: 20px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    /* Tool call group styling */
+    .tool-call-group {
+        margin-bottom: 20px;
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        background: var(--bg-tertiary);
+        overflow: hidden;
     }
     
     .tool-call-header {
-        padding: 8px 12px;
+        padding: 12px 16px;
         cursor: pointer;
         user-select: none;
         display: flex;
         align-items: center;
-        gap: 8px;
-        font-size: 0.9em;
-        color: #666;
-        background: #f5f5f5;
-        border-bottom: 1px solid #e0e0e0;
+        gap: 10px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-secondary);
+        background: transparent;
+        transition: background 0.15s;
     }
     
     .tool-call-header:hover {
-        background: #eeeeee;
+        background: var(--bg-hover);
     }
     
-    .tool-call-header::before {
-        content: "▶";
-        font-size: 0.7em;
+    .tool-call-header .chevron {
+        font-size: 10px;
         transition: transform 0.2s;
+        color: var(--text-muted);
     }
     
-    .tool-call-header.expanded::before {
+    .tool-call-header.expanded .chevron {
         transform: rotate(90deg);
+    }
+    
+    .tool-call-header .tool-icon {
+        font-size: 14px;
     }
     
     .tool-call-content {
         display: none;
-        padding: 12px;
+        padding: 16px;
+        border-top: 1px solid var(--border-color);
     }
     
     .tool-call-content.expanded {
@@ -48,18 +136,131 @@
     }
     
     .tool-call-item {
-        padding: 8px;
+        padding: 10px 12px;
         margin-bottom: 8px;
-        background: white;
-        border-radius: 3px;
-        font-size: 0.85em;
-        color: #888;
+        background: var(--bg-secondary);
+        border-radius: 6px;
+        font-size: 13px;
+        color: var(--text-secondary);
+        border: 1px solid var(--border-color);
     }
     
     .tool-call-item:last-child {
         margin-bottom: 0;
     }
+    
+    .tool-call-item strong {
+        color: var(--accent-purple);
+        font-weight: 600;
+    }
+    
+    .tool-call-item .bubble-id {
+        margin-top: 6px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+    
+    /* Empty state */
+    .no-messages {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--text-muted);
+    }
+    
+    .no-messages svg {
+        width: 48px;
+        height: 48px;
+        margin-bottom: 16px;
+        opacity: 0.5;
+    }
 </style>
+{% endblock %}
+
+{% block content %}
+<div class="chat-container">
+    <div class="chat-header">
+        <h2>
+            {{ chat.title or 'Untitled Chat' }}
+            <a href="#" class="edit-link">edit</a>
+        </h2>
+        <div class="chat-meta">
+            <span class="badge {{ chat.mode }}">{{ chat.mode }}</span>
+            <span>Created: {{ chat.created_at if chat.created_at else 'Unknown' }}</span>
+            {% if chat.workspace_path %}
+            <span>Workspace: {{ chat.workspace_path }}</span>
+            {% endif %}
+        </div>
+    </div>
+    
+    {% if chat.files %}
+    <div class="files-section">
+        <strong>Relevant Files</strong>
+        <ul>
+            {% for file in chat.files %}
+            <li><code>{{ file }}</code></li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+    
+    <div class="messages-container">
+        <h3>Messages</h3>
+        
+        {% if chat.processed_messages %}
+            {% for item in chat.processed_messages %}
+                {% if item.type == 'tool_call_group' %}
+                    <div class="tool-call-group">
+                        <div class="tool-call-header" onclick="toggleToolCalls(this)">
+                            <span class="chevron">▶</span>
+                            <span class="tool-icon">🔧</span>
+                            <span>{{ item.tool_calls|length }} tool call{{ 's' if item.tool_calls|length != 1 else '' }}</span>
+                        </div>
+                        <div class="tool-call-content">
+                            {% for tool_msg in item.tool_calls %}
+                            <div class="tool-call-item">
+                                <strong>{{ tool_msg.role|title }}</strong>
+                                {% if tool_msg.created_at %}
+                                <span class="timestamp">{{ tool_msg.created_at[:19] }}</span>
+                                {% endif %}
+                                {% if tool_msg.bubble_id %}
+                                <div class="bubble-id">
+                                    Bubble ID: {{ tool_msg.bubble_id }}
+                                </div>
+                                {% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                {% elif item.type == 'message' %}
+                    {% set msg = item.data %}
+                    <div class="message {{ msg.role }}">
+                        <div class="message-header">
+                            <span class="role">{{ msg.role|title }}</span>
+                            {% if msg.message_type == 'thinking' %}
+                            <span class="thinking-badge">🧠 Thinking</span>
+                            {% endif %}
+                            {% if msg.created_at %}
+                            <span class="timestamp">{{ msg.created_at[:19] }}</span>
+                            {% endif %}
+                        </div>
+                        <div class="message-content markdown-content">{{ msg.text or msg.rich_text or '' }}</div>
+                    </div>
+                {% endif %}
+            {% endfor %}
+        {% else %}
+            <div class="no-messages">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+                <p>No messages in this chat</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
 <script>
     function toggleToolCalls(element) {
         const content = element.nextElementSibling;
@@ -68,70 +269,3 @@
     }
 </script>
 {% endblock %}
-
-{% block content %}
-<div style="background: white; padding: 24px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-    <h2>{{ chat.title or 'Untitled Chat' }}</h2>
-    <div class="chat-meta" style="margin-top: 12px; margin-bottom: 24px;">
-        <span class="badge {{ chat.mode }}">{{ chat.mode }}</span>
-        <span>Created: {{ chat.created_at if chat.created_at else 'Unknown' }}</span>
-        {% if chat.workspace_path %}
-        <span>Workspace: {{ chat.workspace_path }}</span>
-        {% endif %}
-    </div>
-    
-    {% if chat.files %}
-    <div style="margin-bottom: 24px; padding: 12px; background: #f5f5f5; border-radius: 4px;">
-        <strong>Relevant Files:</strong>
-        <ul style="margin-top: 8px; margin-left: 20px;">
-            {% for file in chat.files %}
-            <li><code>{{ file }}</code></li>
-            {% endfor %}
-        </ul>
-    </div>
-    {% endif %}
-    
-    <div style="margin-top: 32px;">
-        <h3>Messages</h3>
-        {% for item in chat.processed_messages %}
-            {% if item.type == 'tool_call_group' %}
-                <div class="tool-call-group">
-                    <div class="tool-call-header" onclick="toggleToolCalls(this)">
-                        🔧 {{ item.tool_calls|length }} tool call{{ 's' if item.tool_calls|length != 1 else '' }}
-                    </div>
-                    <div class="tool-call-content">
-                        {% for tool_msg in item.tool_calls %}
-                        <div class="tool-call-item">
-                            <strong>{{ tool_msg.role|title }}</strong>
-                            {% if tool_msg.created_at %}
-                            <span style="color: #999; font-size: 0.85em; margin-left: 8px;">{{ tool_msg.created_at[:19] }}</span>
-                            {% endif %}
-                            {% if tool_msg.bubble_id %}
-                            <div style="margin-top: 4px; font-family: monospace; font-size: 0.8em; color: #999;">
-                                Bubble ID: {{ tool_msg.bubble_id }}
-                            </div>
-                            {% endif %}
-                        </div>
-                        {% endfor %}
-                    </div>
-                </div>
-            {% elif item.type == 'message' %}
-                {% set msg = item.data %}
-                <div class="message {{ msg.role }}">
-                    <div class="message-header">
-                        {{ msg.role|title }}
-                        {% if msg.message_type == 'thinking' %}
-                        <span style="color: #999; font-size: 0.85em; margin-left: 8px;">🧠 Thinking</span>
-                        {% endif %}
-                        {% if msg.created_at %}
-                        <span style="color: #999; font-size: 0.9em; margin-left: 12px;">{{ msg.created_at[:19] }}</span>
-                        {% endif %}
-                    </div>
-                    <div class="message-content">{{ msg.text or msg.rich_text or '' }}</div>
-                </div>
-            {% endif %}
-        {% endfor %}
-    </div>
-</div>
-{% endblock %}
-

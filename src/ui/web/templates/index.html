@@ -5,11 +5,11 @@
 {% block extra_head %}
 <style>
     .filter-controls {
-        background: white;
+        background: var(--bg-secondary);
         padding: 16px 20px;
         margin-bottom: 20px;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        border-radius: 10px;
+        border: 1px solid var(--border-color);
         display: flex;
         align-items: center;
         gap: 12px;
@@ -17,41 +17,81 @@
     
     .filter-controls label {
         font-weight: 500;
-        color: #666;
+        font-size: 13px;
+        color: var(--text-secondary);
     }
     
     .filter-controls select {
-        padding: 6px 12px;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        font-size: 14px;
-        background: white;
+        padding: 8px 12px;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        font-size: 13px;
+        font-family: inherit;
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
         cursor: pointer;
+        transition: border-color 0.15s;
     }
     
     .filter-controls select:hover {
-        border-color: #0066cc;
+        border-color: var(--accent-blue);
+    }
+    
+    .filter-controls select:focus {
+        outline: none;
+        border-color: var(--accent-blue);
+        box-shadow: 0 0 0 3px rgba(86, 156, 214, 0.15);
+    }
+    
+    .filter-controls .total-count {
+        color: var(--text-secondary);
+        margin-left: auto;
+        font-size: 13px;
     }
     
     .chat-item.empty-chat {
-        border-left: 4px solid #ff9800;
+        border-left: 3px solid var(--accent-orange);
     }
     
-    .chat-item.empty-chat h3::before {
+    .chat-item.empty-chat h3 a::before {
         content: "⚠ ";
-        color: #ff9800;
+        color: var(--accent-orange);
     }
     
     .messages-count {
         font-weight: 500;
+        padding: 3px 10px;
+        border-radius: 20px;
+        font-size: 12px;
     }
     
     .messages-count.empty {
-        color: #d32f2f;
+        background: rgba(206, 145, 120, 0.15);
+        color: var(--accent-orange);
     }
     
     .messages-count.non-empty {
-        color: #666;
+        background: rgba(78, 201, 176, 0.15);
+        color: var(--accent-green);
+    }
+    
+    .empty-state {
+        text-align: center;
+        padding: 60px 24px;
+    }
+    
+    .empty-state p {
+        color: var(--text-secondary);
+        font-size: 15px;
+    }
+    
+    .empty-state code {
+        background: var(--bg-tertiary);
+        padding: 4px 10px;
+        border-radius: 5px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 13px;
+        color: var(--accent-orange);
     }
 </style>
 {% endblock %}
@@ -64,7 +104,7 @@
         <option value="empty" {% if current_filter == 'empty' %}selected{% endif %}>Empty only</option>
         <option value="non_empty" {% if current_filter == 'non_empty' %}selected{% endif %}>Non-empty only</option>
     </select>
-    <span style="color: #666; margin-left: auto;">Total: {{ total_chats }} chats</span>
+    <span class="total-count">{{ total_chats }} chats</span>
 </div>
 
 <div class="chat-list">
@@ -77,16 +117,17 @@
                 <span class="messages-count {% if (chat.messages_count or 0) == 0 %}empty{% else %}non-empty{% endif %}">
                     {{ chat.messages_count or 0 }} message{{ 's' if (chat.messages_count or 0) != 1 else '' }}
                 </span>
-                <span>Created: {{ chat.created_at[:10] if chat.created_at else 'Unknown' }}</span>
+                <span>{{ chat.created_at[:10] if chat.created_at else 'Unknown' }}</span>
                 {% if chat.workspace_path %}
-                <span>Workspace: {{ chat.workspace_path }}</span>
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; opacity: 0.7;">{{ chat.workspace_path }}</span>
                 {% endif %}
             </div>
         </div>
         {% endfor %}
     {% else %}
-        <div class="chat-item">
-            <p>No chats found{% if current_filter %} matching the filter{% endif %}. Run <code>python -m src ingest</code> to import chats from Cursor.</p>
+        <div class="empty-state">
+            <p>No chats found{% if current_filter %} matching the filter{% endif %}.</p>
+            <p style="margin-top: 12px;">Run <code>python -m src ingest</code> to import chats from Cursor.</p>
         </div>
     {% endif %}
 </div>
@@ -94,13 +135,12 @@
 {% if total_chats > 50 %}
 <div class="pagination">
     {% if page > 1 %}
-    <a href="{{ url_for('index', page=page-1, filter=current_filter or '') }}">Previous</a>
+    <a href="{{ url_for('index', page=page-1, filter=current_filter or '') }}">← Previous</a>
     {% endif %}
-    <span class="current">{{ page }}</span>
+    <a class="current">Page {{ page }}</a>
     {% if has_next %}
-    <a href="{{ url_for('index', page=page+1, filter=current_filter or '') }}">Next</a>
+    <a href="{{ url_for('index', page=page+1, filter=current_filter or '') }}">Next →</a>
     {% endif %}
 </div>
 {% endif %}
 {% endblock %}
-
