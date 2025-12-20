@@ -13,46 +13,11 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Tuple
 from datetime import datetime
+from urllib.parse import unquote
+
+from src.core.config import get_cursor_workspace_storage_path
 
 logger = logging.getLogger(__name__)
-
-
-def get_cursor_workspace_storage_path() -> Path:
-    """
-    Get the path to Cursor workspace storage directory.
-    
-    Returns
-    ----
-    Path
-        Path to workspaceStorage directory
-        
-    Raises
-    ---
-    OSError
-        If running on unsupported OS
-    """
-    import platform
-    system = platform.system()
-    home = Path.home()
-    
-    if system == 'Darwin':  # macOS
-        return home / "Library" / "Application Support" / "Cursor" / "User" / "workspaceStorage"
-    elif system == 'Windows':
-        return Path(home) / "AppData" / "Roaming" / "Cursor" / "User" / "workspaceStorage"
-    elif system == 'Linux':
-        # Check for WSL
-        if os.path.exists('/proc/version'):
-            with open('/proc/version', 'r') as f:
-                if 'microsoft' in f.read().lower():
-                    # WSL - get Windows path
-                    windows_home = os.popen('cd /mnt/c && cmd.exe /c echo %USERPROFILE%').read().strip()
-                    windows_path = Path(windows_home) / "AppData" / "Roaming" / "Cursor" / "User" / "workspaceStorage"
-                    wsl_path = os.popen(f'wslpath "{windows_path}"').read().strip()
-                    return Path(wsl_path)
-        # Native Linux
-        return home / ".config" / "Cursor" / "User" / "workspaceStorage"
-    else:
-        raise OSError(f"Unsupported operating system: {system}")
 
 
 class WorkspaceStateReader:
@@ -75,6 +40,77 @@ class WorkspaceStateReader:
         if workspace_storage_path is None:
             workspace_storage_path = get_cursor_workspace_storage_path()
         self.workspace_storage_path = workspace_storage_path
+        
+        # Determine Cursor Workspaces directory (platform-specific)
+        import platform
+        system = platform.system()
+        home = Path.home()
+        if system == 'Darwin':  # macOS
+            self._workspaces_cache_path = home / "Library" / "Application Support" / "Cursor" / "Workspaces"
+        elif system == 'Windows':
+            self._workspaces_cache_path = Path(home) / "AppData" / "Roaming" / "Cursor" / "Workspaces"
+        elif system == 'Linux':
+            self._workspaces_cache_path = home / ".config" / "Cursor" / "Workspaces"
+        else:
+            # Fallback - will fail gracefully if path doesn't exist
+            self._workspaces_cache_path = home / "Library" / "Application Support" / "Cursor" / "Workspaces"
+    
+    def _resolve_multi_folder_workspace(self, workspace_uri: str) -> List[str]:
+        """
+        Resolve multi-folder workspace reference to list of folder paths.
+        
+        Multi-folder workspaces store a reference like:
+        "file:///Users/.../Cursor/Workspaces/{timestamp}/workspace.json"
+        
+        Parameters
+        ----
+        workspace_uri : str
+            URI to the referenced workspace.json file
+            
+        Returns
+        ----
+        List[str]
+            List of folder paths (file:// URIs), empty if not resolvable
+        """
+        if not workspace_uri.startswith("file://"):
+            return []
+        
+        try:
+            # Decode URI and convert to Path
+            workspace_path = unquote(workspace_uri[7:])  # Remove "file://" prefix
+            workspace_file = Path(workspace_path)
+            
+            if not workspace_file.exists():
+                logger.debug("Referenced workspace file does not exist: %s", workspace_path)
+                return []
+            
+            # Read the multi-folder workspace.json
+            with open(workspace_file, 'r', encoding='utf-8') as f:
+                workspace_data = json.load(f)
+            
+            # Extract folders array
+            folders = workspace_data.get("folders", [])
+            if not folders:
+                return []
+            
+            # Convert folder paths to file:// URIs
+            folder_uris = []
+            for folder in folders:
+                folder_path = folder.get("path", "")
+                if folder_path:
+                    # Handle relative paths (relative to workspace.json location)
+                    if not Path(folder_path).is_absolute():
+                        folder_path = str(workspace_file.parent / folder_path)
+                    
+                    # Convert to absolute path and then to file:// URI
+                    abs_path = str(Path(folder_path).resolve())
+                    folder_uris.append(f"file://{abs_path}")
+            
+            return folder_uris
+            
+        except (json.JSONDecodeError, IOError, OSError) as e:
+            logger.debug("Failed to resolve multi-folder workspace %s: %s", workspace_uri, e)
+            return []
     
     def read_workspace_metadata(self, workspace_hash: str) -> Optional[Dict[str, Any]]:
         """
@@ -148,7 +184,24 @@ class WorkspaceStateReader:
                 try:
                     with open(workspace_json_path, 'r', encoding='utf-8') as f:
                         workspace_data = json.load(f)
-                        metadata["project_path"] = workspace_data.get("folder", "")
+                    
+                    # Handle single-folder workspace
+                    if "folder" in workspace_data:
+                        metadata["project_path"] = workspace_data["folder"]
+                    # Handle multi-folder workspace
+                    elif "workspace" in workspace_data:
+                        folders = self._resolve_multi_folder_workspace(workspace_data["workspace"])
+                        if folders:
+                            # Use first folder as primary project path
+                            metadata["project_path"] = folders[0]
+                            metadata["all_folders"] = folders
+                        else:
+                            # Referenced file doesn't exist - can't resolve
+                            metadata["project_path"] = ""
+                    else:
+                        # Unknown format
+                        metadata["project_path"] = ""
+                        
                 except (json.JSONDecodeError, IOError) as e:
                     logger.warning("Failed to read workspace.json for %s: %s", workspace_hash, e)
             

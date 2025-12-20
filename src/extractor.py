@@ -3,11 +3,12 @@ Module for extracting chat data from Cursor's SQLite database.
 """
 import os
 import json
-import platform
 import sqlite3
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 import logging
+
+from src.core.config import get_cursor_workspace_storage_path
 
 logger = logging.getLogger(__name__)
 
@@ -22,25 +23,7 @@ def get_cursor_chat_path() -> str:
     Raises:
         OSError: If running on an unsupported operating system
     """
-    system = platform.system()
-    home = Path.home()
-    
-    if system == 'Linux' and os.path.exists('/proc/version'):
-        # Check if running in WSL
-        with open('/proc/version', 'r') as f:
-            if 'microsoft' in f.read().lower():
-                # Get Windows user profile path from WSL
-                windows_home = os.popen('cd /mnt/c && cmd.exe /c echo %USERPROFILE%').read().strip()
-                # Convert Windows path to WSL path
-                wsl_path = os.popen(f'wslpath "{windows_home}"').read().strip()
-                windows_cursor_path = os.path.join(windows_home, 'AppData', 'Roaming', 'Cursor', 'User', 'workspaceStorage')
-                return os.popen(f'wslpath "{windows_cursor_path}"').read().strip()
-    elif system == 'Windows':
-        return os.path.join(home, 'AppData', 'Roaming', 'Cursor', 'User', 'workspaceStorage')
-    elif system == 'Darwin':  # macOS
-        return os.path.join(home, 'Library', 'Application Support', 'Cursor', 'User', 'workspaceStorage')
-    else:
-        raise OSError(f"Unsupported operating system: {system}")
+    return str(get_cursor_workspace_storage_path())
 
 
 def read_sqlite_db(db_path: str) -> Optional[List[Dict[str, Any]]]:
@@ -164,7 +147,7 @@ def extract_chats(output_dir: str = '.', filename_pattern: str = 'chat_data_{wor
     Returns:
         List of paths to extracted JSON files
     """
-    base_path = get_cursor_chat_path()
+    base_path = str(get_cursor_workspace_storage_path())
     extracted_files = []
     
     if not os.path.exists(base_path):

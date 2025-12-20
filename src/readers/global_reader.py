@@ -7,41 +7,13 @@ cursorDiskKV table where keys are TEXT in format "composerData:{uuid}".
 
 import json
 import logging
-import platform
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional, List
 
+from src.core.config import get_cursor_global_storage_path
+
 logger = logging.getLogger(__name__)
-
-
-def get_cursor_global_storage_path() -> Path:
-    """
-    Get the path to Cursor global storage directory.
-
-    Returns
-    ----
-    Path
-        Path to globalStorage directory
-    """
-    home = Path.home()
-    system = platform.system()
-
-    if system == "Darwin":  # macOS
-        return (
-            home
-            / "Library"
-            / "Application Support"
-            / "Cursor"
-            / "User"
-            / "globalStorage"
-        )
-    elif system == "Windows":
-        return Path(home) / "AppData" / "Roaming" / "Cursor" / "User" / "globalStorage"
-    elif system == "Linux":
-        return home / ".config" / "Cursor" / "User" / "globalStorage"
-    else:
-        raise OSError(f"Unsupported operating system: {system}")
 
 
 class GlobalComposerReader:
