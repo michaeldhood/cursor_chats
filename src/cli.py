@@ -8,17 +8,23 @@ import json
 import logging
 from pathlib import Path
 from typing import List, Optional
+from datetime import datetime
 
-from src.extractor import extract_chats, get_cursor_chat_path
+from src.extractor import extract_chats
+from src.core.config import get_cursor_workspace_storage_path
 from src.parser import parse_chat_json, convert_df_to_markdown, export_to_csv
 from src.viewer import list_chat_files, find_chat_file, display_chat_file
 from src.tagger import TagManager
 from src.journal import JournalGenerator, generate_journal_from_file
-from src.core.db import ChatDatabase, get_default_db_path
+from src.core.db import ChatDatabase
+from src.core.config import get_default_db_path
+from src.core.models import ChatMode
 from src.services.aggregator import ChatAggregator
 from src.services.legacy_importer import LegacyChatImporter
 from src.services.search import ChatSearchService
 from src.services.exporter import ChatExporter
+from src.readers.workspace_reader import WorkspaceStateReader
+from src.readers.global_reader import GlobalComposerReader
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +88,26 @@ def create_parser() -> argparse.ArgumentParser:
                               help='Path to database file (default: OS-specific location)')
     ingest_parser.add_argument('--source', choices=['cursor', 'claude', 'all'], default='cursor',
                               help='Source to ingest from: cursor (default), claude, or all')
+    ingest_parser.add_argument('--incremental', action='store_true',
+                              help='Only ingest chats updated since last run (faster)')
+    
+    # Watch command (NEW) - daemon mode for automatic ingestion
+    watch_parser = subparsers.add_parser('watch', help='Watch for changes and automatically ingest (daemon mode)')
+    watch_parser.add_argument('--db-path', type=str,
+                             help='Path to database file (default: OS-specific location)')
+    watch_parser.add_argument('--source', choices=['cursor', 'claude', 'all'], default='cursor',
+                             help='Source to ingest from: cursor (default), claude, or all')
+    watch_parser.add_argument('--poll-interval', type=float, default=30.0,
+                             help='Polling interval in seconds (default: 30.0, only used if watchdog unavailable)')
+    watch_parser.add_argument('--debounce', type=float, default=5.0,
+                             help='Debounce time in seconds before triggering ingestion (default: 5.0)')
+    watch_parser.add_argument('--use-polling', action='store_true',
+                             help='Force use of polling instead of file system events')
+    
+    # Update-modes command (lightweight mode update without full re-ingest)
+    update_modes_parser = subparsers.add_parser('update-modes', help='Update chat modes from Cursor databases (lightweight, no re-ingest)')
+    update_modes_parser.add_argument('--db-path', type=str,
+                                     help='Path to database file (default: OS-specific location)')
     
     # Import-legacy command (NEW)
     import_parser = subparsers.add_parser('import-legacy', help='Import legacy chat_data_*.json files')
@@ -110,6 +136,14 @@ def create_parser() -> argparse.ArgumentParser:
                               help='Export specific chat by ID (otherwise exports all)')
     export_parser.add_argument('--db-path', type=str,
                               help='Path to database file (default: OS-specific location)')
+    
+    # Export-composer command (NEW) - export raw composer schema
+    export_composer_parser = subparsers.add_parser('export-composer', help='Export raw composer data from Cursor database to JSON')
+    export_composer_parser.add_argument('composer_id', help='Composer UUID to export')
+    export_composer_parser.add_argument('--output', '-o', type=str,
+                                       help='Output file path (default: composer_{id}.json)')
+    export_composer_parser.add_argument('--include-workspace', action='store_true',
+                                       help='Include workspace metadata if available')
     
     # Web UI command (NEW)
     web_parser = subparsers.add_parser('web', help='Start web UI server')
@@ -354,7 +388,7 @@ def info_command() -> int:
     Returns:
         Exit code (0 for success, non-zero for error)
     """
-    cursor_path = get_cursor_chat_path()
+    cursor_path = str(get_cursor_workspace_storage_path())
     logger.info("Cursor chat path: %s", cursor_path)
     logger.info("Python: %s", sys.version)
     logger.info("Platform: %s", sys.platform)
@@ -731,13 +765,14 @@ def ingest_command(args: argparse.Namespace) -> int:
         # Ingest from each source
         for source in sources_to_ingest:
             if source == "cursor":
-                logger.info("Ingesting chats from Cursor databases...")
+                mode_str = "incremental" if args.incremental else "full"
+                logger.info("Ingesting chats from Cursor databases (%s mode)...", mode_str)
                 
                 def progress_callback(composer_id, total, current):
                     if current % 100 == 0 or current == total:
                         logger.info("Progress: %d/%d composers processed...", current, total)
                 
-                stats = aggregator.ingest_all(progress_callback)
+                stats = aggregator.ingest_all(progress_callback, incremental=args.incremental)
                 
                 logger.info("\nCursor ingestion complete!")
                 logger.info("  Ingested: %d chats", stats["ingested"])
@@ -778,6 +813,200 @@ def ingest_command(args: argparse.Namespace) -> int:
     except Exception as e:
         # Include a traceback to make diagnosing Cursor DB edge cases easier.
         logger.exception("Error during ingestion")
+        return 1
+    finally:
+        db.close()
+
+
+def watch_command(args: argparse.Namespace) -> int:
+    """
+    Handle the watch command - daemon mode for automatic ingestion.
+    
+    Args:
+        args: Command line arguments
+        
+    Returns:
+        Exit code (0 for success, non-zero for error)
+    """
+    import signal
+    
+    db_path = args.db_path or os.getenv('CURSOR_CHATS_DB_PATH')
+    db = ChatDatabase(db_path)
+    
+    try:
+        aggregator = ChatAggregator(db)
+        
+        def do_ingestion():
+            """Perform incremental ingestion."""
+            try:
+                sources_to_ingest = []
+                if args.source == "cursor" or args.source == "all":
+                    sources_to_ingest.append("cursor")
+                if args.source == "claude" or args.source == "all":
+                    sources_to_ingest.append("claude")
+                
+                for source in sources_to_ingest:
+                    if source == "cursor":
+                        stats = aggregator.ingest_all(incremental=True)
+                        logger.info("Auto-ingestion: %d ingested, %d skipped, %d errors",
+                                   stats["ingested"], stats["skipped"], stats["errors"])
+                    elif source == "claude":
+                        stats = aggregator.ingest_claude()
+                        logger.info("Auto-ingestion: %d ingested, %d skipped, %d errors",
+                                   stats["ingested"], stats["skipped"], stats["errors"])
+            except Exception as e:
+                logger.error("Error during automatic ingestion: %s", e)
+        
+        # Perform initial ingestion
+        logger.info("Performing initial ingestion...")
+        do_ingestion()
+        
+        # Start watcher
+        from src.services.watcher import IngestionWatcher
+        
+        watcher = IngestionWatcher(
+            ingestion_callback=do_ingestion,
+            use_watchdog=None if not args.use_polling else False,
+            debounce_seconds=args.debounce,
+            poll_interval=args.poll_interval
+        )
+        
+        # Handle shutdown gracefully
+        def signal_handler(sig, frame):
+            logger.info("\nShutting down watcher...")
+            watcher.stop()
+            db.close()
+            sys.exit(0)
+        
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        
+        watcher.start()
+        logger.info("Watcher started. Press Ctrl+C to stop.")
+        
+        # Keep running
+        try:
+            while watcher.is_running():
+                import time
+                time.sleep(1)
+        except KeyboardInterrupt:
+            signal_handler(None, None)
+        
+        return 0
+        
+    except Exception as e:
+        logger.exception("Error in watch mode")
+        return 1
+    finally:
+        db.close()
+
+
+def update_modes_command(args: argparse.Namespace) -> int:
+    """
+    Handle the update-modes command - lightweight mode update without full re-ingest.
+    
+    This command reads all chats from the database, looks up their correct modes
+    from Cursor's databases, and updates only the mode field if it's different.
+    Much faster than a full re-ingest since it doesn't re-process messages.
+    
+    Args:
+        args: Command line arguments
+        
+    Returns:
+        Exit code (0 for success, non-zero for error)
+    """
+    db_path = args.db_path or os.getenv('CURSOR_CHATS_DB_PATH')
+    db = ChatDatabase(db_path)
+    
+    try:
+        logger.info("Updating chat modes from Cursor databases...")
+        
+        # Get all chats from database
+        all_chats = db.list_chats(limit=100000, offset=0)  # Get all chats
+        logger.info("Found %d chats in database", len(all_chats))
+        
+        # Initialize readers
+        workspace_reader = WorkspaceStateReader()
+        global_reader = GlobalComposerReader()
+        
+        # Load workspace data to get composer heads
+        workspaces_metadata = workspace_reader.read_all_workspaces()
+        composer_heads = {}
+        for workspace_hash, metadata in workspaces_metadata.items():
+            composer_data = metadata.get("composer_data")
+            if composer_data and isinstance(composer_data, dict):
+                all_composers = composer_data.get("allComposers", [])
+                for composer in all_composers:
+                    composer_id = composer.get("composerId")
+                    if composer_id:
+                        composer_heads[composer_id] = {
+                            "unifiedMode": composer.get("unifiedMode"),
+                            "forceMode": composer.get("forceMode"),
+                        }
+        
+        logger.info("Loaded %d composer heads from workspaces", len(composer_heads))
+        
+        # Mode mapping
+        mode_map = {
+            "chat": ChatMode.CHAT,
+            "edit": ChatMode.EDIT,
+            "agent": ChatMode.AGENT,
+            "composer": ChatMode.COMPOSER,
+            "plan": ChatMode.PLAN,
+            "debug": ChatMode.DEBUG,
+            "ask": ChatMode.ASK,
+        }
+        
+        updated_count = 0
+        unchanged_count = 0
+        not_found_count = 0
+        
+        # Update each chat's mode
+        for chat in all_chats:
+            composer_id = chat.get("composer_id")
+            current_mode = chat.get("mode", "chat")
+            
+            # Try to get mode from composer head first
+            composer_head = composer_heads.get(composer_id)
+            force_mode = None
+            unified_mode = None
+            
+            if composer_head:
+                force_mode = composer_head.get("forceMode")
+                unified_mode = composer_head.get("unifiedMode")
+            
+            # If not in workspace head, try global database
+            if not force_mode and not unified_mode:
+                composer_data = global_reader.read_composer(composer_id)
+                if composer_data and composer_data.get("data"):
+                    data = composer_data["data"]
+                    force_mode = data.get("forceMode")
+                    unified_mode = data.get("unifiedMode")
+            
+            # Determine correct mode
+            correct_mode_str = force_mode or unified_mode or "chat"
+            correct_mode = mode_map.get(correct_mode_str, ChatMode.CHAT)
+            
+            # Update if different
+            if current_mode != correct_mode.value:
+                cursor = db.conn.cursor()
+                cursor.execute("UPDATE chats SET mode = ? WHERE id = ?", 
+                             (correct_mode.value, chat["id"]))
+                db.conn.commit()
+                updated_count += 1
+                if updated_count % 10 == 0:
+                    logger.info("Updated %d chats...", updated_count)
+            else:
+                unchanged_count += 1
+        
+        logger.info("\nMode update complete!")
+        logger.info("  Updated: %d chats", updated_count)
+        logger.info("  Unchanged: %d chats", unchanged_count)
+        logger.info("  Not found in Cursor: %d chats", not_found_count)
+        
+        return 0
+    except Exception as e:
+        logger.error("Error updating modes: %s", e, exc_info=True)
         return 1
     finally:
         db.close()
@@ -883,7 +1112,7 @@ def web_command(args: argparse.Namespace) -> int:
     logger.info("Starting web UI server on http://%s:%d", args.host, args.port)
     logger.info("Press Ctrl+C to stop")
     
-    app.run(host=args.host, port=args.port, debug=False)
+    app.run(host=args.host, port=args.port, debug=True)
     return 0
 
 
@@ -931,6 +1160,128 @@ def export_command(args: argparse.Namespace) -> int:
         db.close()
 
 
+def export_composer_command(args: argparse.Namespace) -> int:
+    """
+    Handle the export-composer command - export raw composer schema to JSON.
+    
+    Args:
+        args: Command line arguments
+        
+    Returns:
+        Exit code (0 for success, non-zero for error)
+    """
+    composer_id = args.composer_id
+    logger.info("Exporting composer %s...", composer_id)
+    
+    try:
+        from src.readers.global_reader import GlobalComposerReader
+        from src.readers.workspace_reader import WorkspaceStateReader
+        
+        # Read composer data from global database
+        global_reader = GlobalComposerReader()
+        composer_info = global_reader.read_composer(composer_id)
+        
+        if not composer_info:
+            logger.error("Composer %s not found in global database", composer_id)
+            return 1
+        
+        composer_data = composer_info["data"]
+        
+        # Resolve conversation bubbles if using headers-only format
+        conversation = composer_data.get("conversation", [])
+        if not conversation:
+            headers = composer_data.get("fullConversationHeadersOnly", [])
+            if headers:
+                logger.info("Resolving conversation bubbles from headers...")
+                from src.services.aggregator import ChatAggregator
+                from src.core.db import ChatDatabase
+                # Create a temporary aggregator just to use the resolution method
+                temp_db = ChatDatabase(":memory:")  # In-memory DB just for method access
+                temp_aggregator = ChatAggregator(temp_db)
+                conversation = temp_aggregator._resolve_conversation_from_headers(composer_id, headers)
+                temp_db.close()
+                # Add resolved conversation to export data
+                composer_data = composer_data.copy()
+                composer_data["conversation_resolved"] = conversation
+                logger.info("Resolved %d conversation bubbles", len(conversation))
+        
+        export_data = {
+            "composer_id": composer_id,
+            "source": "cursor_global_database",
+            "exported_at": datetime.now().isoformat(),
+            "composer_data": composer_data,
+        }
+        
+        # Optionally include workspace metadata
+        if args.include_workspace:
+            logger.info("Looking up workspace metadata...")
+            workspace_reader = WorkspaceStateReader()
+            workspaces = workspace_reader.read_all_workspaces()
+            
+            workspace_info = None
+            for workspace_hash, metadata in workspaces.items():
+                composer_data = metadata.get("composer_data")
+                if composer_data and isinstance(composer_data, dict):
+                    all_composers = composer_data.get("allComposers", [])
+                    for composer in all_composers:
+                        if composer.get("composerId") == composer_id:
+                            workspace_info = {
+                                "workspace_hash": workspace_hash,
+                                "workspace_metadata": {
+                                    "project_path": metadata.get("project_path"),
+                                    "composer_head": {
+                                        "name": composer.get("name"),
+                                        "subtitle": composer.get("subtitle"),
+                                        "createdAt": composer.get("createdAt"),
+                                        "lastUpdatedAt": composer.get("lastUpdatedAt"),
+                                        "unifiedMode": composer.get("unifiedMode"),
+                                        "forceMode": composer.get("forceMode"),
+                                    }
+                                }
+                            }
+                            break
+                    if workspace_info:
+                        break
+            
+            if workspace_info:
+                export_data["workspace_info"] = workspace_info
+                logger.info("Found workspace metadata for workspace %s", workspace_info["workspace_hash"])
+            else:
+                logger.info("No workspace metadata found for this composer")
+        
+        # Determine output file
+        if args.output:
+            output_path = Path(args.output)
+        else:
+            output_path = Path(f"composer_{composer_id}.json")
+        
+        # Write JSON file with pretty formatting
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(export_data, f, indent=2, ensure_ascii=False)
+        
+        logger.info("Exported composer to %s", output_path)
+        logger.info("  File size: %d bytes", output_path.stat().st_size)
+        
+        # Print summary
+        final_composer_data = export_data["composer_data"]
+        logger.info("\nComposer Summary:")
+        logger.info("  ID: %s", composer_id)
+        logger.info("  Name: %s", final_composer_data.get("name") or final_composer_data.get("subtitle") or "Untitled")
+        logger.info("  Created: %s", final_composer_data.get("createdAt"))
+        logger.info("  Updated: %s", final_composer_data.get("lastUpdatedAt"))
+        logger.info("  Mode: %s", final_composer_data.get("forceMode") or final_composer_data.get("unifiedMode") or "chat")
+        
+        conversation = final_composer_data.get("conversation", []) or final_composer_data.get("conversation_resolved", [])
+        headers = final_composer_data.get("fullConversationHeadersOnly", [])
+        logger.info("  Messages: %d bubbles", len(conversation) if conversation else len(headers))
+        
+        return 0
+        
+    except Exception as e:
+        logger.exception("Error exporting composer: %s", e)
+        return 1
+
+
 def main() -> int:
     """
     Main entry point for the CLI.
@@ -962,6 +1313,10 @@ def main() -> int:
         return journal_command(args)
     elif args.command == 'ingest':
         return ingest_command(args)
+    elif args.command == 'watch':
+        return watch_command(args)
+    elif args.command == 'update-modes':
+        return update_modes_command(args)
     elif args.command == 'import-legacy':
         return import_legacy_command(args)
     elif args.command == 'search':
@@ -970,6 +1325,8 @@ def main() -> int:
         return export_command(args)
     elif args.command == 'web':
         return web_command(args)
+    elif args.command == 'export-composer':
+        return export_composer_command(args)
     else:
         # No command specified, show help
         parser.print_help()
