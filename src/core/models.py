@@ -17,6 +17,9 @@ class ChatMode(str, Enum):
     EDIT = "edit"
     AGENT = "agent"
     COMPOSER = "composer"
+    PLAN = "plan"
+    DEBUG = "debug"
+    ASK = "ask"
 
 
 class MessageRole(str, Enum):
