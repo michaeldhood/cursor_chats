@@ -153,3 +153,8 @@ ALTER TABLE messages ADD COLUMN message_type TEXT DEFAULT 'response';
 - **Timestamps** are stored as TEXT (ISO strings) as written by the application layer.
 - `message_type` values are written from the application’s `MessageType` enum (currently: `response`, `tool_call`, `thinking`, `empty`).
 - `messages_count` is denormalized for list/filter performance; it’s set during upsert to `len(chat.messages)` at ingest time.
+
+
+
+
+
