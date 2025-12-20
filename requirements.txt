@@ -3,4 +3,5 @@ pytest>=6.0.0
 pytest-cov>=2.10.0
 flask>=2.0.0
 dlt[rest_api]>=1.0.0
-watchdog>=3.0.0  # Optional: for file system watching (falls back to polling if unavailable) 
+watchdog>=3.0.0  # Optional: for file system watching (falls back to polling if unavailable)
+gevent>=23.9.0  # For async Flask support (SSE) 

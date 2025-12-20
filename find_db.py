@@ -1,8 +1,9 @@
-from src.extractor import get_cursor_chat_path, get_project_name
+from src.core.config import get_cursor_workspace_storage_path
+from src.extractor import get_project_name
 import os
 
 def find_vscdb_files():
-    base_path = get_cursor_chat_path()
+    base_path = str(get_cursor_workspace_storage_path())
     print(f"Cursor workspace directory: {base_path}")
     
     if not os.path.exists(base_path):

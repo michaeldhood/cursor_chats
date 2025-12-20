@@ -1096,7 +1096,7 @@ def search_command(args: argparse.Namespace) -> int:
 
 def web_command(args: argparse.Namespace) -> int:
     """
-    Handle the web command - start Flask server.
+    Handle the web command - start Flask server with gevent for SSE support.
     
     Args:
         args: Command line arguments
@@ -1107,12 +1107,26 @@ def web_command(args: argparse.Namespace) -> int:
     if args.db_path:
         os.environ['CURSOR_CHATS_DB_PATH'] = args.db_path
     
+    # Monkey patch for gevent async support (required for SSE)
+    try:
+        from gevent import monkey
+        monkey.patch_all()
+        from gevent.pywsgi import WSGIServer
+    except ImportError:
+        logger.error("gevent is required for SSE support. Install with: pip install gevent")
+        logger.info("Falling back to standard Flask server (SSE may not work properly)")
+        from src.ui.web.app import app
+        app.run(host=args.host, port=args.port, debug=True)
+        return 0
+    
     from src.ui.web.app import app
     
     logger.info("Starting web UI server on http://%s:%d", args.host, args.port)
+    logger.info("SSE enabled - frontend will auto-update when new chats are ingested")
     logger.info("Press Ctrl+C to stop")
     
-    app.run(host=args.host, port=args.port, debug=True)
+    server = WSGIServer((args.host, args.port), app)
+    server.serve_forever()
     return 0
 
 

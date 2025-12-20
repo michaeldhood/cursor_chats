@@ -477,6 +477,25 @@
                 hljs.highlightElement(block);
             });
         });
+        
+        // Server-Sent Events for live updates
+        // Automatically reload page when new chats are ingested
+        if (typeof EventSource !== 'undefined') {
+            const source = new EventSource('/stream');
+            
+            source.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                if (data.type === 'update') {
+                    // Reload page to show new chats
+                    location.reload();
+                }
+            };
+            
+            source.onerror = function(event) {
+                // Connection closed or error - EventSource will auto-reconnect
+                console.debug('SSE connection error, will reconnect automatically');
+            };
+        }
     </script>
     {% block extra_scripts %}{% endblock %}
 </body>

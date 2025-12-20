@@ -13,19 +13,6 @@ from src.core.config import get_cursor_workspace_storage_path
 logger = logging.getLogger(__name__)
 
 
-def get_cursor_chat_path() -> str:
-    """
-    Get the path to Cursor chat data based on the operating system.
-    
-    Returns:
-        str: Path to Cursor workspace storage directory
-        
-    Raises:
-        OSError: If running on an unsupported operating system
-    """
-    return str(get_cursor_workspace_storage_path())
-
-
 def read_sqlite_db(db_path: str) -> Optional[List[Dict[str, Any]]]:
     """
     Read and extract chat data from the SQLite database.

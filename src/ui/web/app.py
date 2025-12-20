@@ -3,7 +3,11 @@ Flask web UI for browsing and searching aggregated chats.
 """
 import os
 import logging
-from flask import Flask, render_template, request, jsonify, redirect, url_for
+import queue
+import threading
+import time
+import json
+from flask import Flask, render_template, request, jsonify, redirect, url_for, Response
 from pathlib import Path
 
 from src.core.db import ChatDatabase
@@ -14,6 +18,24 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.urandom(24)
+
+# Global queue management for SSE client connections
+update_queues: list[queue.Queue] = []
+update_queues_lock = threading.Lock()
+
+
+def broadcast_update():
+    """
+    Broadcast an update event to all connected SSE clients.
+    
+    Called when database changes are detected (via polling in /stream endpoint).
+    """
+    with update_queues_lock:
+        for q in update_queues:
+            try:
+                q.put({'type': 'update', 'timestamp': time.time()})
+            except Exception as e:
+                logger.debug("Error broadcasting to client: %s", e)
 
 
 def get_db():
@@ -181,6 +203,61 @@ def api_search():
         })
     finally:
         db.close()
+
+
+@app.route('/stream')
+def stream():
+    """
+    Server-Sent Events endpoint for live updates.
+    
+    Polls the database every 2 seconds for changes and pushes updates to connected clients.
+    """
+    def event_stream():
+        """Generator function for SSE stream."""
+        q = queue.Queue()
+        
+        # Register this client's queue
+        with update_queues_lock:
+            update_queues.append(q)
+        
+        try:
+            # Send initial connection message
+            yield "data: {}\n\n".format(json.dumps({'type': 'connected'}))
+            
+            # Poll database for changes
+            db = get_db()
+            try:
+                last_seen = db.get_last_updated_at()
+                
+                while True:
+                    time.sleep(2)  # Check every 2 seconds
+                    
+                    # Check database for updates
+                    current = db.get_last_updated_at()
+                    if current and current != last_seen:
+                        last_seen = current
+                        # Send update event
+                        yield "data: {}\n\n".format(json.dumps({
+                            'type': 'update',
+                            'timestamp': current
+                        }))
+                    
+                    # Also check queue for manual broadcasts (future use)
+                    try:
+                        data = q.get(timeout=0.1)
+                        yield "data: {}\n\n".format(json.dumps(data))
+                    except queue.Empty:
+                        pass
+                        
+            finally:
+                db.close()
+        finally:
+            # Unregister this client's queue
+            with update_queues_lock:
+                if q in update_queues:
+                    update_queues.remove(q)
+    
+    return Response(event_stream(), mimetype='text/event-stream')
 
 
 if __name__ == '__main__':

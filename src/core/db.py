@@ -46,6 +46,12 @@ class ChatDatabase:
         self.conn = sqlite3.connect(self.db_path)
         self.conn.row_factory = sqlite3.Row
         
+        # Enable WAL mode for concurrent read/write access
+        # This allows the daemon (writer) and web server (reader) to access DB simultaneously
+        cursor = self.conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.fetchone()  # Consume the result
+        
         cursor = self.conn.cursor()
         
         # Workspaces table
@@ -725,4 +731,20 @@ class ChatDatabase:
         """, (source, timestamp.isoformat()))
         
         return [row[0] for row in cursor.fetchall()]
+    
+    def get_last_updated_at(self) -> Optional[str]:
+        """
+        Get the most recent last_updated_at timestamp across all chats.
+        
+        Useful for detecting when new chats have been ingested.
+        
+        Returns
+        ----
+        str, optional
+            ISO format timestamp of most recent update, or None if no chats exist
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT MAX(last_updated_at) FROM chats")
+        result = cursor.fetchone()
+        return result[0] if result and result[0] else None
 
