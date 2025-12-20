@@ -6,7 +6,8 @@ import logging
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 from pathlib import Path
 
-from src.core.db import ChatDatabase, get_default_db_path
+from src.core.db import ChatDatabase
+from src.core.config import get_default_db_path
 from src.services.search import ChatSearchService
 
 logger = logging.getLogger(__name__)
