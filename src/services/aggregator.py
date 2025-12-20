@@ -5,6 +5,8 @@ Orchestrates extraction from Cursor databases, linking workspace metadata
 to global composer conversations, and storing normalized data.
 """
 import logging
+import os
+from pathlib import Path
 from typing import List, Dict, Optional, Any, Tuple
 from datetime import datetime
 
@@ -130,6 +132,243 @@ class ChatAggregator:
         # Default empty
         return MessageType.EMPTY
     
+    def _find_project_root(self, file_path: str) -> Optional[str]:
+        """
+        Find project root (git root or common project directory) from a file path.
+        
+        Tries multiple strategies:
+        1. Walk up directory tree looking for .git or project markers (if path exists)
+        2. Infer from path structure (e.g., /workspace/project -> /workspace/project)
+        3. Use parent directory as fallback
+        
+        Parameters
+        ----
+        file_path : str
+            Absolute file path
+            
+        Returns
+        ----
+        str, optional
+            Project root path as file:// URI, or None if not found
+        """
+        try:
+            path = Path(file_path)
+            if not path.is_absolute():
+                return None
+            
+            # Strategy 1: If path exists, walk up looking for git/project markers
+            if path.exists() or path.parent.exists():
+                current = path.parent if path.is_file() else path
+                while current != current.parent:  # Stop at filesystem root
+                    # Check for .git directory
+                    if (current / ".git").exists():
+                        return f"file://{current}"
+                    
+                    # Check for common project markers
+                    if (current / "package.json").exists() or \
+                       (current / "pyproject.toml").exists() or \
+                       (current / "setup.py").exists() or \
+                       (current / "Cargo.toml").exists() or \
+                       (current / "go.mod").exists():
+                        return f"file://{current}"
+                    
+                    current = current.parent
+            
+            # Strategy 2: Infer from path structure
+            # For paths like /workspace/project/..., infer /workspace/project
+            # For paths like /Users/.../project/..., infer project root
+            parts = path.parts
+            if len(parts) >= 3:
+                # Look for common workspace/project patterns
+                # /workspace/project/... -> /workspace/project
+                if parts[1] == "workspace" and len(parts) >= 3:
+                    inferred_root = Path("/") / parts[1] / parts[2]
+                    return f"file://{inferred_root}"
+                
+                # /Users/.../git/project/... -> find project directory
+                # Walk up to find a directory that looks like a project root
+                current = path.parent if path.is_file() else path
+                # Go up a few levels to find likely project root
+                for _ in range(5):  # Check up to 5 levels up
+                    if current == current.parent:
+                        break
+                    # Heuristic: if directory name looks like a project (not generic)
+                    if current.name and current.name not in ["sources", "src", "lib", "dlt"]:
+                        # Check if parent has common project structure indicators
+                        parent_parts = current.parts
+                        if len(parent_parts) >= 2:
+                            # If we're in something like /.../git/project, return project
+                            if "git" in parent_parts or "workspace" in parent_parts:
+                                return f"file://{current}"
+                    current = current.parent
+            
+            # Strategy 3: Fallback - use parent directory
+            if path.is_file():
+                return f"file://{path.parent}"
+            
+            return None
+            
+        except (OSError, ValueError) as e:
+            logger.debug("Error finding project root for %s: %s", file_path, e)
+            return None
+    
+    def _extract_path_from_uri(self, uri: Any) -> Optional[str]:
+        """
+        Extract file path from various URI formats.
+        
+        Parameters
+        ----
+        uri : Any
+            URI as dict, string, or other format
+            
+        Returns
+        ----
+        str, optional
+            File path, or None if not extractable
+        """
+        if isinstance(uri, dict):
+            return uri.get("fsPath") or uri.get("path") or uri.get("external", "").replace("file://", "")
+        elif isinstance(uri, str):
+            if uri.startswith("file://"):
+                return uri[7:]  # Remove "file://" prefix
+            return uri
+        return None
+    
+    def _infer_workspace_from_context(self, composer_data: Dict[str, Any]) -> Optional[str]:
+        """
+        Extract workspace path from file selections in composer context.
+        
+        When workspace reference is missing (e.g., deleted multi-folder config),
+        we can infer the workspace from file paths referenced in the conversation.
+        
+        Checks multiple sources:
+        - context.fileSelections
+        - context.folderSelections
+        - context.selections
+        - context.mentions.fileSelections
+        - context.mentions.selections (JSON strings)
+        - codeBlockData keys
+        - newlyCreatedFiles array
+        - originalFileStates keys
+        
+        Parameters
+        ----
+        composer_data : Dict[str, Any]
+            Raw composer data from global database
+            
+        Returns
+        ----
+        str, optional
+            Workspace path as file:// URI, or None if not inferrable
+        """
+        context = composer_data.get("context", {})
+        if not isinstance(context, dict):
+            return None
+        
+        # Helper to try a path and return if successful
+        def try_path(path: Optional[str]) -> Optional[str]:
+            if not path:
+                return None
+            # Remove file:// prefix if present
+            clean_path = path.replace("file://", "") if path.startswith("file://") else path
+            project_root = self._find_project_root(clean_path)
+            return project_root
+        
+        # 1. Check context.fileSelections (most reliable)
+        file_selections = context.get("fileSelections", [])
+        if file_selections:
+            for fs in file_selections:
+                if not isinstance(fs, dict):
+                    continue
+                uri = fs.get("uri", {})
+                path = self._extract_path_from_uri(uri)
+                result = try_path(path)
+                if result:
+                    return result
+        
+        # 2. Check context.folderSelections
+        folder_selections = context.get("folderSelections", [])
+        if folder_selections:
+            for fs in folder_selections:
+                if not isinstance(fs, dict):
+                    continue
+                uri = fs.get("uri", {})
+                path = self._extract_path_from_uri(uri)
+                if path:
+                    try:
+                        abs_path = str(Path(path).resolve())
+                        return f"file://{abs_path}"
+                    except (OSError, ValueError):
+                        pass
+        
+        # 3. Check context.selections
+        selections = context.get("selections", [])
+        if selections:
+            for sel in selections:
+                if not isinstance(sel, dict):
+                    continue
+                uri = sel.get("uri", {})
+                path = self._extract_path_from_uri(uri)
+                result = try_path(path)
+                if result:
+                    return result
+        
+        # 4. Check context.mentions.fileSelections (keys are file paths)
+        mentions = context.get("mentions", {})
+        if isinstance(mentions, dict):
+            mentions_file_selections = mentions.get("fileSelections", {})
+            if isinstance(mentions_file_selections, dict):
+                for file_path in mentions_file_selections.keys():
+                    result = try_path(file_path)
+                    if result:
+                        return result
+            
+            # 5. Check context.mentions.selections (values may be JSON strings with URIs)
+            mentions_selections = mentions.get("selections", {})
+            if isinstance(mentions_selections, dict):
+                for key, value in mentions_selections.items():
+                    # Key might be a JSON string with URI
+                    if isinstance(key, str) and "uri" in key:
+                        try:
+                            import json
+                            parsed = json.loads(key)
+                            uri = parsed.get("uri", "")
+                            path = self._extract_path_from_uri(uri)
+                            result = try_path(path)
+                            if result:
+                                return result
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+        
+        # 6. Check codeBlockData keys (file paths as dictionary keys)
+        code_block_data = composer_data.get("codeBlockData", {})
+        if isinstance(code_block_data, dict):
+            for file_path in code_block_data.keys():
+                result = try_path(file_path)
+                if result:
+                    return result
+        
+        # 7. Check newlyCreatedFiles array
+        newly_created_files = composer_data.get("newlyCreatedFiles", [])
+        if newly_created_files:
+            for file_obj in newly_created_files:
+                if isinstance(file_obj, dict):
+                    uri = file_obj.get("uri", {})
+                    path = self._extract_path_from_uri(uri)
+                    result = try_path(path)
+                    if result:
+                        return result
+        
+        # 8. Check originalFileStates keys (file paths as dictionary keys)
+        original_file_states = composer_data.get("originalFileStates", {})
+        if isinstance(original_file_states, dict):
+            for file_path in original_file_states.keys():
+                result = try_path(file_path)
+                if result:
+                    return result
+        
+        return None
+    
     def _convert_composer_to_chat(self, composer_data: Dict[str, Any], 
                                    workspace_id: Optional[int] = None,
                                    composer_head: Optional[Dict[str, Any]] = None) -> Optional[Chat]:
@@ -172,6 +411,9 @@ class ChatAggregator:
             "edit": ChatMode.EDIT,
             "agent": ChatMode.AGENT,
             "composer": ChatMode.COMPOSER,
+            "plan": ChatMode.PLAN,
+            "debug": ChatMode.DEBUG,
+            "ask": ChatMode.ASK,
         }
         mode = mode_map.get(force_mode or unified_mode, ChatMode.CHAT)
         
@@ -341,21 +583,48 @@ class ChatAggregator:
         
         return workspace_map, composer_to_workspace, composer_heads
     
-    def ingest_all(self, progress_callback: Optional[callable] = None) -> Dict[str, int]:
+    def ingest_all(self, progress_callback: Optional[callable] = None, 
+                   incremental: bool = False) -> Dict[str, int]:
         """
-        Ingest all chats from Cursor databases.
+        Ingest chats from Cursor databases.
         
         Parameters
         ----
         progress_callback : callable, optional
             Callback function(composer_id, total, current) for progress updates
+        incremental : bool
+            If True, only process chats updated since last run. If False, process all.
             
         Returns
         ----
         Dict[str, int]
             Statistics: {"ingested": count, "skipped": count, "errors": count}
         """
-        logger.info("Starting chat ingestion from Cursor databases...")
+        source = "cursor"
+        start_time = datetime.now()
+        
+        last_timestamp = None
+        state = None
+        
+        if incremental:
+            logger.info("Starting incremental chat ingestion from Cursor databases...")
+            # Get last run state
+            state = self.db.get_ingestion_state(source)
+            if state and state.get("last_processed_timestamp"):
+                try:
+                    last_timestamp = datetime.fromisoformat(state["last_processed_timestamp"])
+                    logger.info("Last ingestion: %s", last_timestamp)
+                    logger.info("Only processing chats updated since last run...")
+                except (ValueError, TypeError):
+                    logger.warning("Invalid last_processed_timestamp, falling back to full ingestion")
+                    incremental = False
+                    last_timestamp = None
+            else:
+                logger.info("No previous ingestion found, performing full ingestion...")
+                incremental = False
+                last_timestamp = None
+        else:
+            logger.info("Starting full chat ingestion from Cursor databases...")
         
         # Load workspace data once and build all mappings
         logger.info("Loading workspace data...")
@@ -363,9 +632,18 @@ class ChatAggregator:
         logger.info("Loaded %d workspaces, %d composer mappings", 
                    len(workspace_map), len(composer_to_workspace))
         
+        # Cache for inferred workspaces (path -> workspace_id)
+        # Avoids repeated workspace creation for same inferred path
+        inferred_workspace_cache: Dict[str, int] = {}
+        stats_inferred = 0
+        
         # Stream composers from global database (don't materialize)
         logger.info("Streaming composers from global database...")
-        stats = {"ingested": 0, "skipped": 0, "errors": 0}
+        stats = {"ingested": 0, "skipped": 0, "errors": 0, "inferred_workspaces": 0, "updated": 0, "new": 0}
+        
+        # Track last processed timestamp for incremental updates
+        last_processed_timestamp = None
+        last_composer_id = None
         
         # Get approximate total for progress (optional, can skip if slow)
         try:
@@ -384,10 +662,63 @@ class ChatAggregator:
         
         # Stream processing
         idx = 0
+        processed_count = 0
+        
         for composer_info in self.global_reader.read_all_composers():
             idx += 1
             composer_id = composer_info["composer_id"]
             composer_data = composer_info["data"]
+            
+            # Incremental mode: skip if chat hasn't been updated
+            if incremental and state:
+                # Check if this chat was updated since last run
+                chat_updated_at = None
+                if composer_data.get("lastUpdatedAt"):
+                    try:
+                        chat_updated_at = datetime.fromtimestamp(composer_data["lastUpdatedAt"] / 1000)
+                    except (ValueError, TypeError):
+                        pass
+                
+                # Also check composer head for lastUpdatedAt
+                composer_head = composer_heads.get(composer_id)
+                if not chat_updated_at and composer_head and composer_head.get("lastUpdatedAt"):
+                    try:
+                        chat_updated_at = datetime.fromtimestamp(composer_head["lastUpdatedAt"] / 1000)
+                    except (ValueError, TypeError):
+                        pass
+                
+                # If we have a timestamp, check if it's newer than last run
+                if chat_updated_at and last_timestamp:
+                    if chat_updated_at <= last_timestamp:
+                        # Chat hasn't been updated since last run - skip it
+                        stats["skipped"] += 1
+                        continue
+                    # Chat has been updated - process it
+                elif not chat_updated_at:
+                    # No timestamp available in source - check database for existing chat
+                    cursor = self.db.conn.cursor()
+                    cursor.execute("SELECT id, last_updated_at FROM chats WHERE cursor_composer_id = ?", 
+                                 (composer_id,))
+                    existing = cursor.fetchone()
+                    if existing:
+                        # Chat exists in database - use its stored timestamp for comparison
+                        db_last_updated = existing[1]  # last_updated_at column
+                        if db_last_updated:
+                            try:
+                                db_timestamp = datetime.fromisoformat(db_last_updated)
+                                # If database timestamp is older than last run, skip it
+                                # (we already ingested it in a previous run)
+                                if last_timestamp and db_timestamp <= last_timestamp:
+                                    stats["skipped"] += 1
+                                    continue
+                            except (ValueError, TypeError):
+                                # Invalid timestamp format - fall through to process
+                                pass
+                        # If no database timestamp or can't parse, skip it anyway
+                        # (assume unchanged since we have no evidence it changed)
+                        stats["skipped"] += 1
+                        continue
+                    # Chat doesn't exist in database - process it (it's new)
             
             if progress_callback and total:
                 progress_callback(composer_id, total, idx)
@@ -395,6 +726,33 @@ class ChatAggregator:
             try:
                 # Find workspace for this composer
                 workspace_id = composer_to_workspace.get(composer_id)
+                
+                # If no workspace found, try inference from file context
+                if workspace_id is None:
+                    inferred_path = self._infer_workspace_from_context(composer_data)
+                    if inferred_path:
+                        # Check cache first
+                        if inferred_path in inferred_workspace_cache:
+                            workspace_id = inferred_workspace_cache[inferred_path]
+                        else:
+                            # Create workspace from inferred path
+                            # Extract path from file:// URI
+                            workspace_path = inferred_path
+                            if workspace_path.startswith("file://"):
+                                workspace_path = workspace_path[7:]
+                            
+                            workspace = Workspace(
+                                workspace_hash="",  # No hash for inferred workspaces
+                                folder_uri=inferred_path,
+                                resolved_path=workspace_path,
+                            )
+                            workspace_id = self.db.upsert_workspace(workspace)
+                            inferred_workspace_cache[inferred_path] = workspace_id
+                            stats["inferred_workspaces"] += 1
+                            stats_inferred += 1
+                            
+                            if stats_inferred % 10 == 0:
+                                logger.debug("Inferred %d workspaces from file context", stats_inferred)
                 
                 # Get composer head for title enrichment
                 composer_head = composer_heads.get(composer_id)
@@ -406,18 +764,56 @@ class ChatAggregator:
                     continue
                 
                 # Store in database
-                self.db.upsert_chat(chat)
-                stats["ingested"] += 1
+                # Check if this is actually an update or a new chat
+                cursor = self.db.conn.cursor()
+                cursor.execute("SELECT id FROM chats WHERE cursor_composer_id = ?", (chat.cursor_composer_id,))
+                existing_chat = cursor.fetchone()
+                is_new = existing_chat is None
                 
-                if idx % 100 == 0:
-                    logger.info("Processed %d composers...", idx)
+                self.db.upsert_chat(chat)
+                
+                if is_new:
+                    stats["ingested"] += 1
+                    stats["new"] += 1
+                else:
+                    stats["ingested"] += 1
+                    stats["updated"] += 1
+                
+                processed_count += 1
+                
+                # Track last processed timestamp
+                if chat.last_updated_at:
+                    if not last_processed_timestamp or chat.last_updated_at > last_processed_timestamp:
+                        last_processed_timestamp = chat.last_updated_at
+                        last_composer_id = composer_id
+                elif chat.created_at:
+                    if not last_processed_timestamp or chat.created_at > last_processed_timestamp:
+                        last_processed_timestamp = chat.created_at
+                        last_composer_id = composer_id
+                
+                if processed_count % 100 == 0:
+                    logger.info("Processed %d composers...", processed_count)
                     
             except Exception as e:
                 logger.error("Error processing composer %s: %s", composer_id, e)
                 stats["errors"] += 1
         
-        logger.info("Ingestion complete: %d ingested, %d skipped, %d errors", 
-                   stats["ingested"], stats["skipped"], stats["errors"])
+        # Update ingestion state
+        self.db.update_ingestion_state(
+            source=source,
+            last_run_at=start_time,
+            last_processed_timestamp=last_processed_timestamp.isoformat() if last_processed_timestamp else None,
+            last_composer_id=last_composer_id,
+            stats=stats
+        )
+        
+        if incremental:
+            logger.info("Incremental ingestion complete: %d ingested (%d new, %d updated), %d skipped, %d errors, %d workspaces inferred", 
+                       stats["ingested"], stats.get("new", 0), stats.get("updated", 0), 
+                       stats["skipped"], stats["errors"], stats["inferred_workspaces"])
+        else:
+            logger.info("Ingestion complete: %d ingested, %d skipped, %d errors, %d workspaces inferred", 
+                       stats["ingested"], stats["skipped"], stats["errors"], stats["inferred_workspaces"])
         
         return stats
     
