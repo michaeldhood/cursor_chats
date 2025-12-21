@@ -1,0 +1,199 @@
+"""
+Database-related CLI commands.
+
+Commands for ingesting, searching, importing, and exporting chat data
+from the local database.
+"""
+import click
+from pathlib import Path
+
+from src.core.db import ChatDatabase
+from src.core.config import get_default_db_path
+from src.services.legacy_importer import LegacyChatImporter
+from src.services.search import ChatSearchService
+from src.services.exporter import ChatExporter
+from src.cli.common import db_option, output_dir_option, format_option, create_progress_callback
+from src.cli.orchestrators.ingestion import IngestionOrchestrator
+
+
+@click.command()
+@db_option
+@click.option(
+    '--source',
+    type=click.Choice(['cursor', 'claude', 'all']),
+    default='cursor',
+    help='Source to ingest from'
+)
+@click.option(
+    '--incremental',
+    is_flag=True,
+    help='Only ingest chats updated since last run (faster)'
+)
+@click.pass_context
+def ingest(ctx, db_path, source, incremental):
+    """Ingest chats from Cursor databases into local DB."""
+    # Get database from context
+    if db_path:
+        ctx.obj.db_path = Path(db_path)
+
+    db = ctx.obj.get_db()
+
+    try:
+        orchestrator = IngestionOrchestrator(db)
+
+        # Create progress callback
+        def progress_callback(item_id, total, current):
+            if current % 100 == 0 or current == total:
+                click.echo(f"Progress: {current}/{total} items processed...")
+
+        mode_str = "incremental" if incremental else "full"
+        click.echo(f"Ingesting chats from {source} ({mode_str} mode)...")
+
+        stats = orchestrator.ingest(source, incremental, progress_callback)
+
+        # Display results
+        click.echo(f"\nIngestion complete!")
+        click.secho(f"  Ingested: {stats['ingested']} chats", fg='green')
+        click.echo(f"  Skipped: {stats['skipped']} chats")
+        if stats['errors'] > 0:
+            click.secho(f"  Errors: {stats['errors']} chats", fg='yellow')
+            raise click.Abort()
+
+    except Exception as e:
+        click.secho(f"Error during ingestion: {e}", fg='red', err=True)
+        if ctx.obj.verbose:
+            import traceback
+            click.echo(traceback.format_exc(), err=True)
+        raise click.Abort()
+
+
+@click.command('import-legacy')
+@click.argument('path', default='.', type=click.Path(exists=True))
+@click.option(
+    '--pattern',
+    default='chat_data_*.json',
+    help='File pattern for directory import'
+)
+@db_option
+@click.pass_context
+def import_legacy(ctx, path, pattern, db_path):
+    """Import legacy chat_data_*.json files."""
+    click.echo("Importing legacy chat files...")
+
+    # Get database from context
+    if db_path:
+        ctx.obj.db_path = Path(db_path)
+
+    db = ctx.obj.get_db()
+
+    try:
+        importer = LegacyChatImporter(db)
+        path_obj = Path(path)
+
+        if path_obj.is_file():
+            # Import single file
+            count = importer.import_file(path_obj)
+            click.secho(f"Imported {count} chats from {path}", fg='green')
+        else:
+            # Import directory
+            stats = importer.import_directory(path_obj, pattern)
+            click.echo("\nImport complete!")
+            click.echo(f"  Files processed: {stats['files']}")
+            click.secho(f"  Chats imported: {stats['chats']}", fg='green')
+            if stats['errors'] > 0:
+                click.secho(f"  Errors: {stats['errors']}", fg='yellow')
+
+        if not (count if path_obj.is_file() else stats['chats']):
+            raise click.Abort()
+
+    except Exception as e:
+        click.secho(f"Error during import: {e}", fg='red', err=True)
+        raise click.Abort()
+
+
+@click.command()
+@click.argument('query')
+@click.option(
+    '--limit',
+    default=20,
+    help='Maximum number of results'
+)
+@db_option
+@click.pass_context
+def search(ctx, query, limit, db_path):
+    """Search chats in local database."""
+    # Get database from context
+    if db_path:
+        ctx.obj.db_path = Path(db_path)
+
+    db = ctx.obj.get_db()
+
+    try:
+        search_service = ChatSearchService(db)
+        results = search_service.search(query, limit)
+
+        if not results:
+            click.echo(f"No chats found matching '{query}'")
+            raise click.Abort()
+
+        click.secho(f"\nFound {len(results)} chats matching '{query}':\n", fg='green')
+
+        for chat in results:
+            click.echo(f"Chat ID: {chat['id']}")
+            click.echo(f"  Title: {chat['title']}")
+            click.echo(f"  Mode: {chat['mode']}")
+            click.echo(f"  Created: {chat['created_at']}")
+            if chat.get('workspace_path'):
+                click.echo(f"  Workspace: {chat['workspace_path']}")
+            click.echo()
+
+    except Exception as e:
+        click.secho(f"Error during search: {e}", fg='red', err=True)
+        raise click.Abort()
+
+
+@click.command()
+@format_option(['markdown', 'json'], default='markdown')
+@output_dir_option(default='exports')
+@click.option(
+    '--chat-id',
+    type=int,
+    help='Export specific chat by ID (otherwise exports all)'
+)
+@db_option
+@click.pass_context
+def export(ctx, format, output_dir, chat_id, db_path):
+    """Export chats from database."""
+    click.echo("Exporting chats...")
+
+    # Get database from context
+    if db_path:
+        ctx.obj.db_path = Path(db_path)
+
+    db = ctx.obj.get_db()
+
+    try:
+        exporter = ChatExporter(db)
+        output_path = Path(output_dir)
+
+        if chat_id:
+            # Export single chat
+            chat_file = output_path / f"chat_{chat_id}.md"
+            if exporter.export_chat_markdown(chat_id, chat_file):
+                click.secho(f"Exported chat {chat_id} to {chat_file}", fg='green')
+            else:
+                raise click.Abort()
+        else:
+            # Export all chats
+            if format == 'markdown':
+                count = exporter.export_all_markdown(output_path)
+                click.secho(f"Exported {count} chats to {output_path}", fg='green')
+                if count == 0:
+                    raise click.Abort()
+            else:
+                click.secho("JSON export not yet implemented", fg='yellow')
+                raise click.Abort()
+
+    except Exception as e:
+        click.secho(f"Error during export: {e}", fg='red', err=True)
+        raise click.Abort()
