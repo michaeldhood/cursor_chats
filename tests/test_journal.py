@@ -10,7 +10,15 @@ from unittest.mock import patch, MagicMock
 import pandas as pd
 
 from src.journal import JournalTemplate, JournalGenerator, generate_journal_from_file
-from src.cli import create_parser, journal_command
+# Import from old CLI file (deprecated but needed for tests)
+import importlib.util
+import pathlib
+old_cli_path = pathlib.Path(__file__).parent.parent / 'src' / 'cli.py'
+spec = importlib.util.spec_from_file_location('old_cli', old_cli_path)
+old_cli = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(old_cli)
+create_parser = old_cli.create_parser
+journal_command = old_cli.journal_command
 
 
 class TestJournalTemplate:

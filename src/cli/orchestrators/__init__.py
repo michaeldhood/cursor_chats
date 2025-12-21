@@ -8,4 +8,7 @@ or called from other interfaces (web UI, scripts, etc.).
 # Phase 4: Ingestion orchestrator
 from .ingestion import IngestionOrchestrator
 
-__all__ = ['IngestionOrchestrator']
+# Phase 7b: Batch orchestrator
+from .batch import BatchOrchestrator
+
+__all__ = ['IngestionOrchestrator', 'BatchOrchestrator']

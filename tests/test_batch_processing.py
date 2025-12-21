@@ -9,7 +9,17 @@ from pathlib import Path
 import pytest
 from unittest.mock import patch, MagicMock, call
 
-from src.cli import create_parser, convert_command, tag_command, batch_command
+# Import from old CLI file (deprecated but needed for tests)
+import importlib.util
+import pathlib
+old_cli_path = pathlib.Path(__file__).parent.parent / 'src' / 'cli.py'
+spec = importlib.util.spec_from_file_location('old_cli', old_cli_path)
+old_cli = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(old_cli)
+create_parser = old_cli.create_parser
+convert_command = old_cli.convert_command
+tag_command = old_cli.tag_command
+batch_command = old_cli.batch_command
 from src.tagger import TagManager
 
 
@@ -78,8 +88,8 @@ class TestBatchProcessing:
                 '--format', 'csv'
             ])
             
-            with patch('src.cli.parse_chat_json') as mock_parse, \
-                 patch('src.cli.export_to_csv') as mock_export:
+            with patch('src.parser.parse_chat_json') as mock_parse, \
+                 patch('src.parser.export_to_csv') as mock_export:
                 
                 mock_parse.return_value = MagicMock()
                 result = convert_command(args)
@@ -144,10 +154,10 @@ class TestBatchProcessing:
             '--tags-file', str(tmp_path / 'tags.json')
         ])
         
-        with patch('src.cli.extract_chats') as mock_extract, \
-             patch('src.cli.parse_chat_json') as mock_parse, \
-             patch('src.cli.convert_df_to_markdown') as mock_convert, \
-             patch('src.cli.TagManager') as mock_tag_manager:
+        with patch('src.extractor.extract_chats') as mock_extract, \
+             patch('src.parser.parse_chat_json') as mock_parse, \
+             patch('src.parser.convert_df_to_markdown') as mock_convert, \
+             patch('src.tagger.TagManager') as mock_tag_manager:
             
             # Mock extract returning files
             mock_extract.return_value = ['chat_1.json', 'chat_2.json']
@@ -196,7 +206,7 @@ class TestBatchProcessing:
         os.chdir(tmp_path)
         
         try:
-            with patch('src.cli.extract_chats') as mock_extract:
+            with patch('src.extractor.extract_chats') as mock_extract:
                 result = batch_command(args)
                 
                 # Extract should not be called

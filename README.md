@@ -82,11 +82,11 @@ python -m src view chat_filename.md  # View a specific chat file
 
 ### Managing Tags
 
-The tagging system helps organize and categorize your chat conversations:
+The tagging system helps organize and categorize your chat conversations. Tags are stored in the database:
 
 ```bash
-# Auto-tag chats from a JSON file
-python -m src tag auto chat_data_[hash].json
+# Auto-tag all chats in the database
+python -m src tag auto-tag-all
 
 # Manually add tags to a chat
 python -m src tag add [chat_id] python api testing
@@ -101,12 +101,9 @@ python -m src tag list --all
 python -m src tag list [chat_id]
 
 # Find chats by tag (supports wildcards)
-python -m src tag find "language/python"
+python -m src tag find "tech/python"
 python -m src tag find "topic/*"
 python -m src tag find "*/api"
-
-# Use a custom tags file
-python -m src tag auto chat_data.json --tags-file my_tags.json
 ```
 
 Tags are hierarchical and normalized (lowercase, spaces become hyphens). The auto-tagger recognizes:
@@ -126,19 +123,64 @@ python -m src convert --all --format markdown
 # Convert all files matching a pattern
 python -m src convert --all --pattern "chat_data_2024*.json" --format csv
 
-# Auto-tag all JSON files
-python -m src tag auto --all
-
 # Run complete pipeline: extract, convert to markdown, and tag
 python -m src batch
 
 # Run specific batch operations
-python -m src batch --convert --tag  # Skip extraction
+python -m src batch --convert --tag  # Skip extraction (requires database for tagging)
 python -m src batch --extract --convert --format csv  # Extract and convert to CSV
 
 # Specify output directory for batch operations
 python -m src batch --output-dir ./my_exports
 ```
+
+### Database Operations
+
+The new CLI uses a local SQLite database for storing and managing chats:
+
+```bash
+# Ingest chats from Cursor databases into local DB
+python -m src ingest
+
+# Ingest from specific sources
+python -m src ingest --source cursor
+python -m src ingest --source claude
+python -m src ingest --source all
+
+# Incremental ingestion (faster, only new/updated chats)
+python -m src ingest --incremental
+
+# Import legacy JSON files to database
+python -m src import-legacy chat_data_*.json
+python -m src import-legacy . --pattern "chat_data_*.json"
+
+# Search chats in database
+python -m src search "python api"
+
+# Export chats from database
+python -m src export --format markdown --output-dir exports
+python -m src export --chat-id 123  # Export specific chat
+
+# Watch for changes and auto-ingest (daemon mode)
+python -m src watch
+
+# Update chat modes without full re-ingest
+python -m src update-modes
+```
+
+### Web Interface
+
+Start a web UI server to browse chats in your browser:
+
+```bash
+# Start web server (default: http://127.0.0.1:5000)
+python -m src web
+
+# Custom host and port
+python -m src web --host 0.0.0.0 --port 8080
+```
+
+The web interface includes Server-Sent Events (SSE) for live updates when new chats are ingested.
 
 ## File Naming Convention
 

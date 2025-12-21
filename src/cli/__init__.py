@@ -51,11 +51,13 @@ def cleanup(ctx, result, **kwargs):
 
 # Import and register command groups here as they're migrated
 # Phase 2: Simple commands (info, list, view)
-from .commands.misc import info, list, view
+from .commands.misc import info, list, view, export_composer, batch
 
 cli.add_command(info)
 cli.add_command(list)
 cli.add_command(view)
+cli.add_command(export_composer)
+cli.add_command(batch)
 
 # Phase 3: Extract/convert commands
 from .commands.extract import extract, convert
@@ -74,6 +76,19 @@ cli.add_command(export)
 # Tag commands
 from .commands.tag import tag
 cli.add_command(tag)
+
+# Phase 7a: Journal commands
+from .commands.journal import journal
+cli.add_command(journal)
+
+# Phase 7c: Web command
+from .commands.web import web
+cli.add_command(web)
+
+# Phase 6: Watch commands
+from .commands.watch import watch, update_modes
+cli.add_command(watch)
+cli.add_command(update_modes)
 
 
 def main():

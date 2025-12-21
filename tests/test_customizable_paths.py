@@ -8,7 +8,16 @@ from pathlib import Path
 import pytest
 from unittest.mock import patch, MagicMock
 
-from src.cli import create_parser, extract_command, convert_command
+# Import from old CLI file (deprecated but needed for tests)
+import importlib.util
+import pathlib
+old_cli_path = pathlib.Path(__file__).parent.parent / 'src' / 'cli.py'
+spec = importlib.util.spec_from_file_location('old_cli', old_cli_path)
+old_cli = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(old_cli)
+create_parser = old_cli.create_parser
+extract_command = old_cli.extract_command
+convert_command = old_cli.convert_command
 from src.extractor import analyze_workspace
 
 
@@ -25,7 +34,7 @@ class TestCustomizablePaths:
         args = parser.parse_args(['extract', '--output-dir', str(custom_dir)])
         
         # Mock the extract_chats function to avoid actual extraction
-        with patch('src.cli.extract_chats') as mock_extract:
+        with patch('src.extractor.extract_chats') as mock_extract:
             mock_extract.return_value = ['file1.json', 'file2.json']
             
             result = extract_command(args)
@@ -44,7 +53,7 @@ class TestCustomizablePaths:
         
         args = parser.parse_args(['extract', '--filename-pattern', 'workspace_{workspace}_chats.json'])
         
-        with patch('src.cli.extract_chats') as mock_extract:
+        with patch('src.extractor.extract_chats') as mock_extract:
             mock_extract.return_value = ['file1.json']
             
             extract_command(args)
@@ -70,8 +79,8 @@ class TestCustomizablePaths:
             '--output-dir', str(tmp_path)
         ])
         
-        with patch('src.cli.parse_chat_json') as mock_parse, \
-             patch('src.cli.export_to_csv') as mock_export:
+        with patch('src.parser.parse_chat_json') as mock_parse, \
+             patch('src.parser.export_to_csv') as mock_export:
             
             mock_parse.return_value = MagicMock()
             
@@ -99,8 +108,8 @@ class TestCustomizablePaths:
             '--output-dir', str(custom_dir)
         ])
         
-        with patch('src.cli.parse_chat_json') as mock_parse, \
-             patch('src.cli.export_to_csv') as mock_export:
+        with patch('src.parser.parse_chat_json') as mock_parse, \
+             patch('src.parser.export_to_csv') as mock_export:
             
             mock_parse.return_value = MagicMock()
             
@@ -145,7 +154,7 @@ class TestCustomizablePaths:
         
         args = parser.parse_args(['extract', '--output-dir', str(nested_dir)])
         
-        with patch('src.cli.extract_chats') as mock_extract:
+        with patch('src.extractor.extract_chats') as mock_extract:
             mock_extract.return_value = ['file1.json']
             
             result = extract_command(args)

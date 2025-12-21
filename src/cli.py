@@ -1,5 +1,12 @@
 """
 Command-line interface for Cursor Chat Extractor.
+
+DEPRECATED: This module is deprecated and will be removed in a future version.
+Please use the new Click-based CLI in src/cli/ instead.
+
+The new CLI is now the default. To use this old CLI temporarily, you can
+set USE_OLD_CLI=true environment variable (if still supported), but migration
+to the new CLI is strongly recommended.
 """
 import os
 import sys
