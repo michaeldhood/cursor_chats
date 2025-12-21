@@ -50,10 +50,16 @@ def cleanup(ctx, result, **kwargs):
 
 
 # Import and register command groups here as they're migrated
-# This will be populated during Phases 2-7
-# Example:
-# from .commands.extract import extract
-# cli.add_command(extract)
+# Phase 2: Simple commands (info, list, view)
+from .commands.misc import info, list, view
+
+cli.add_command(info)
+cli.add_command(list)
+cli.add_command(view)
+
+# Tag commands
+from .commands.tag import tag
+cli.add_command(tag)
 
 
 def main():
