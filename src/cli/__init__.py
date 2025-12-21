@@ -57,6 +57,12 @@ cli.add_command(info)
 cli.add_command(list)
 cli.add_command(view)
 
+# Phase 3: Extract/convert commands
+from .commands.extract import extract, convert
+
+cli.add_command(extract)
+cli.add_command(convert)
+
 # Tag commands
 from .commands.tag import tag
 cli.add_command(tag)
