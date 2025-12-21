@@ -361,9 +361,12 @@ class ChatDatabase:
         """, (query, limit, offset))
         
         results = []
+        chat_ids = []
         for row in cursor.fetchall():
+            chat_id = row[0]
+            chat_ids.append(chat_id)
             results.append({
-                "id": row[0],
+                "id": chat_id,
                 "composer_id": row[1],
                 "title": row[2],
                 "mode": row[3],
@@ -372,7 +375,29 @@ class ChatDatabase:
                 "messages_count": row[6] if len(row) > 6 else 0,
                 "workspace_hash": row[7] if len(row) > 7 else None,
                 "workspace_path": row[8] if len(row) > 8 else None,
+                "tags": [],  # Will be populated below
             })
+        
+        # Load tags for all chats in batch
+        if chat_ids:
+            placeholders = ','.join(['?'] * len(chat_ids))
+            cursor.execute(f"""
+                SELECT chat_id, tag FROM tags 
+                WHERE chat_id IN ({placeholders})
+                ORDER BY chat_id, tag
+            """, chat_ids)
+            
+            # Group tags by chat_id
+            tags_by_chat = {}
+            for row in cursor.fetchall():
+                chat_id, tag = row
+                if chat_id not in tags_by_chat:
+                    tags_by_chat[chat_id] = []
+                tags_by_chat[chat_id].append(tag)
+            
+            # Assign tags to results
+            for result in results:
+                result["tags"] = tags_by_chat.get(result["id"], [])
         
         return results
     
@@ -443,6 +468,10 @@ class ChatDatabase:
         # Get files
         cursor.execute("SELECT path FROM chat_files WHERE chat_id = ?", (chat_id,))
         chat_data["files"] = [row[0] for row in cursor.fetchall()]
+        
+        # Get tags
+        cursor.execute("SELECT tag FROM tags WHERE chat_id = ? ORDER BY tag", (chat_id,))
+        chat_data["tags"] = [row[0] for row in cursor.fetchall()]
         
         return chat_data
     
@@ -561,9 +590,12 @@ class ChatDatabase:
         cursor.execute(query, params)
         
         results = []
+        chat_ids = []
         for row in cursor.fetchall():
+            chat_id = row[0]
+            chat_ids.append(chat_id)
             results.append({
-                "id": row[0],
+                "id": chat_id,
                 "composer_id": row[1],
                 "title": row[2],
                 "mode": row[3],
@@ -572,7 +604,29 @@ class ChatDatabase:
                 "messages_count": row[6],
                 "workspace_hash": row[7],
                 "workspace_path": row[8],
+                "tags": [],  # Will be populated below
             })
+        
+        # Load tags for all chats in batch
+        if chat_ids:
+            placeholders = ','.join(['?'] * len(chat_ids))
+            cursor.execute(f"""
+                SELECT chat_id, tag FROM tags 
+                WHERE chat_id IN ({placeholders})
+                ORDER BY chat_id, tag
+            """, chat_ids)
+            
+            # Group tags by chat_id
+            tags_by_chat = {}
+            for row in cursor.fetchall():
+                chat_id, tag = row
+                if chat_id not in tags_by_chat:
+                    tags_by_chat[chat_id] = []
+                tags_by_chat[chat_id].append(tag)
+            
+            # Assign tags to results
+            for result in results:
+                result["tags"] = tags_by_chat.get(result["id"], [])
         
         return results
     
@@ -747,4 +801,112 @@ class ChatDatabase:
         cursor.execute("SELECT MAX(last_updated_at) FROM chats")
         result = cursor.fetchone()
         return result[0] if result and result[0] else None
+    
+    def add_tags(self, chat_id: int, tags: List[str]) -> None:
+        """
+        Add tags to a chat.
+        
+        Parameters
+        ----
+        chat_id : int
+            Chat ID
+        tags : List[str]
+            List of tags to add
+        """
+        cursor = self.conn.cursor()
+        for tag in tags:
+            try:
+                cursor.execute(
+                    "INSERT OR IGNORE INTO tags (chat_id, tag) VALUES (?, ?)",
+                    (chat_id, tag)
+                )
+            except sqlite3.IntegrityError:
+                # Tag already exists, ignore
+                pass
+        self.conn.commit()
+    
+    def remove_tags(self, chat_id: int, tags: List[str]) -> None:
+        """
+        Remove tags from a chat.
+        
+        Parameters
+        ----
+        chat_id : int
+            Chat ID
+        tags : List[str]
+            List of tags to remove
+        """
+        cursor = self.conn.cursor()
+        cursor.executemany(
+            "DELETE FROM tags WHERE chat_id = ? AND tag = ?",
+            [(chat_id, tag) for tag in tags]
+        )
+        self.conn.commit()
+    
+    def get_chat_tags(self, chat_id: int) -> List[str]:
+        """
+        Get all tags for a chat.
+        
+        Parameters
+        ----
+        chat_id : int
+            Chat ID
+            
+        Returns
+        ----
+        List[str]
+            List of tags
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT tag FROM tags WHERE chat_id = ? ORDER BY tag", (chat_id,))
+        return [row[0] for row in cursor.fetchall()]
+    
+    def get_all_tags(self) -> Dict[str, int]:
+        """
+        Get all unique tags with their frequency.
+        
+        Returns
+        ----
+        Dict[str, int]
+            Dictionary mapping tags to their occurrence count
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT tag, COUNT(*) as count FROM tags GROUP BY tag ORDER BY count DESC")
+        return {row[0]: row[1] for row in cursor.fetchall()}
+    
+    def find_chats_by_tag(self, tag: str) -> List[int]:
+        """
+        Find all chat IDs with a specific tag.
+        
+        Parameters
+        ----
+        tag : str
+            Tag to search for (supports SQL LIKE wildcards: %)
+            
+        Returns
+        ----
+        List[int]
+            List of chat IDs
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT DISTINCT chat_id FROM tags WHERE tag LIKE ?", (tag,))
+        return [row[0] for row in cursor.fetchall()]
+    
+    def get_chat_files(self, chat_id: int) -> List[str]:
+        """
+        Get all file paths associated with a chat.
+        
+        Parameters
+        ----
+        chat_id : int
+            Chat ID
+            
+        Returns
+        ----
+        List[str]
+            List of file paths
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT path FROM chat_files WHERE chat_id = ?", (chat_id,))
+        return [row[0] for row in cursor.fetchall()]
 
