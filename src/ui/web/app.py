@@ -72,6 +72,137 @@ def index():
         db.close()
 
 
+@app.route('/database')
+def database_view():
+    """Database view - tabular spreadsheet-like view of all chats."""
+    db = get_db()
+    try:
+        # Get pagination params
+        page = int(request.args.get('page', 1))
+        limit = 50
+        offset = (page - 1) * limit
+        
+        # Get filter params
+        empty_filter = request.args.get('filter', None)
+        mode_filter = request.args.get('mode', None)
+        source_filter = request.args.get('source', None)
+        
+        # Get sort params
+        sort_by = request.args.get('sort', 'created_at')
+        sort_order = request.args.get('order', 'desc')
+        
+        # Validate sort params
+        valid_sorts = ['title', 'mode', 'source', 'messages', 'created_at']
+        if sort_by not in valid_sorts:
+            sort_by = 'created_at'
+        if sort_order not in ['asc', 'desc']:
+            sort_order = 'desc'
+        
+        # Build query
+        cursor = db.conn.cursor()
+        
+        conditions = []
+        params = []
+        
+        if empty_filter == 'empty':
+            conditions.append("c.messages_count = 0")
+        elif empty_filter == 'non_empty':
+            conditions.append("c.messages_count > 0")
+        
+        if mode_filter:
+            conditions.append("c.mode = ?")
+            params.append(mode_filter)
+        
+        if source_filter:
+            conditions.append("c.source = ?")
+            params.append(source_filter)
+        
+        where_clause = ""
+        if conditions:
+            where_clause = "WHERE " + " AND ".join(conditions)
+        
+        # Map sort column names
+        sort_column_map = {
+            'title': 'c.title',
+            'mode': 'c.mode',
+            'source': 'c.source',
+            'messages': 'c.messages_count',
+            'created_at': 'c.created_at'
+        }
+        order_column = sort_column_map.get(sort_by, 'c.created_at')
+        order_dir = 'ASC' if sort_order == 'asc' else 'DESC'
+        
+        query = f"""
+            SELECT c.id, c.cursor_composer_id, c.title, c.mode, c.created_at, c.source, c.messages_count,
+                   w.workspace_hash, w.resolved_path
+            FROM chats c
+            LEFT JOIN workspaces w ON c.workspace_id = w.id
+            {where_clause}
+            ORDER BY {order_column} IS NULL, {order_column} {order_dir}
+            LIMIT ? OFFSET ?
+        """
+        
+        params.extend([limit, offset])
+        cursor.execute(query, params)
+        
+        chats = []
+        chat_ids = []
+        for row in cursor.fetchall():
+            chat_id = row[0]
+            chat_ids.append(chat_id)
+            chats.append({
+                "id": chat_id,
+                "composer_id": row[1],
+                "title": row[2],
+                "mode": row[3],
+                "created_at": row[4],
+                "source": row[5],
+                "messages_count": row[6],
+                "workspace_hash": row[7],
+                "workspace_path": row[8],
+                "tags": [],
+            })
+        
+        # Load tags for all chats in batch
+        if chat_ids:
+            placeholders = ','.join(['?'] * len(chat_ids))
+            cursor.execute(f"""
+                SELECT chat_id, tag FROM tags 
+                WHERE chat_id IN ({placeholders})
+                ORDER BY chat_id, tag
+            """, chat_ids)
+            
+            tags_by_chat = {}
+            for row in cursor.fetchall():
+                chat_id, tag = row
+                if chat_id not in tags_by_chat:
+                    tags_by_chat[chat_id] = []
+                tags_by_chat[chat_id].append(tag)
+            
+            for chat in chats:
+                chat["tags"] = tags_by_chat.get(chat["id"], [])
+        
+        # Get total count with filters
+        count_query = f"SELECT COUNT(*) FROM chats c {where_clause}"
+        count_params = params[:-2]  # Remove limit and offset
+        cursor.execute(count_query, count_params)
+        total_chats = cursor.fetchone()[0]
+        
+        return render_template('database.html',
+                             chats=chats,
+                             page=page,
+                             limit=limit,
+                             total_chats=total_chats,
+                             has_next=len(chats) == limit,
+                             current_filter=empty_filter,
+                             mode_filter=mode_filter,
+                             source_filter=source_filter,
+                             sort_by=sort_by,
+                             sort_order=sort_order)
+    finally:
+        db.close()
+
+
 @app.route('/search')
 def search():
     """Search page."""
