@@ -152,6 +152,31 @@ def search(ctx, query, limit, db_path):
         raise click.Abort()
 
 
+@click.command('rebuild-index')
+@db_option
+@click.pass_context
+def rebuild_index(ctx, db_path):
+    """Rebuild the full-text search index.
+    
+    Run this after bulk imports or if search results seem incomplete.
+    The index covers chat titles, message content, tags, and file paths.
+    """
+    click.echo("Rebuilding search index...")
+    
+    # Get database from context
+    if db_path:
+        ctx.obj.db_path = Path(db_path)
+    
+    db = ctx.obj.get_db()
+    
+    try:
+        db.rebuild_search_index()
+        click.secho("Search index rebuilt successfully!", fg='green')
+    except Exception as e:
+        click.secho(f"Error rebuilding index: {e}", fg='red', err=True)
+        raise click.Abort()
+
+
 @click.command()
 @format_option(['markdown', 'json'], default='markdown')
 @output_dir_option(default='exports')

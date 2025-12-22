@@ -133,7 +133,7 @@ class ChatDatabase:
             )
         """)
         
-        # FTS5 virtual table for full-text search
+        # FTS5 virtual table for full-text search on messages
         cursor.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS message_fts USING fts5(
                 chat_id,
@@ -141,6 +141,21 @@ class ChatDatabase:
                 rich_text,
                 content='messages',
                 content_rowid='id'
+            )
+        """)
+        
+        # NEW: Unified FTS5 table for Obsidian-like search across ALL content
+        # Includes chat titles, message text, tags, and file paths
+        # Uses prefix tokenizer for instant search-as-you-type
+        cursor.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS unified_fts USING fts5(
+                chat_id UNINDEXED,
+                content_type,
+                title,
+                message_text,
+                tags,
+                files,
+                tokenize='porter unicode61'
             )
         """)
         
@@ -189,6 +204,15 @@ class ChatDatabase:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_workspaces_hash ON workspaces(workspace_hash)")
+        
+        # Check if unified_fts needs to be rebuilt (migration for existing databases)
+        cursor.execute("SELECT COUNT(*) FROM unified_fts")
+        unified_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM chats")
+        chat_count = cursor.fetchone()[0]
+        if chat_count > 0 and unified_count == 0:
+            logger.info("Rebuilding unified FTS index for %d chats...", chat_count)
+            self._rebuild_unified_fts()
         
         self.conn.commit()
         logger.info("Database schema initialized at %s", self.db_path)
@@ -327,6 +351,10 @@ class ChatDatabase:
             """, (chat_id, file_path))
         
         self.conn.commit()
+        
+        # Update unified FTS index for instant search
+        self._update_unified_fts(chat_id)
+        
         return chat_id
     
     def search_chats(self, query: str, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
@@ -909,4 +937,312 @@ class ChatDatabase:
         cursor = self.conn.cursor()
         cursor.execute("SELECT path FROM chat_files WHERE chat_id = ?", (chat_id,))
         return [row[0] for row in cursor.fetchall()]
+    
+    def _rebuild_unified_fts(self):
+        """Rebuild the unified FTS index from all existing data."""
+        cursor = self.conn.cursor()
+        
+        # Clear existing unified FTS data
+        cursor.execute("DELETE FROM unified_fts")
+        
+        # Get all chats with their messages, tags, and files
+        cursor.execute("""
+            SELECT c.id, c.title
+            FROM chats c
+        """)
+        chats = cursor.fetchall()
+        
+        for chat_id, title in chats:
+            # Get all message text for this chat
+            cursor.execute("""
+                SELECT GROUP_CONCAT(text, ' ') 
+                FROM messages 
+                WHERE chat_id = ?
+            """, (chat_id,))
+            message_text = cursor.fetchone()[0] or ""
+            
+            # Get tags
+            cursor.execute("""
+                SELECT GROUP_CONCAT(tag, ' ')
+                FROM tags
+                WHERE chat_id = ?
+            """, (chat_id,))
+            tags = cursor.fetchone()[0] or ""
+            
+            # Get files
+            cursor.execute("""
+                SELECT GROUP_CONCAT(path, ' ')
+                FROM chat_files
+                WHERE chat_id = ?
+            """, (chat_id,))
+            files = cursor.fetchone()[0] or ""
+            
+            # Insert into unified FTS
+            cursor.execute("""
+                INSERT INTO unified_fts (chat_id, content_type, title, message_text, tags, files)
+                VALUES (?, 'chat', ?, ?, ?, ?)
+            """, (chat_id, title or "", message_text, tags, files))
+        
+        self.conn.commit()
+        logger.info("Rebuilt unified FTS index with %d chats", len(chats))
+    
+    def _update_unified_fts(self, chat_id: int):
+        """Update unified FTS entry for a specific chat."""
+        cursor = self.conn.cursor()
+        
+        # Delete existing entry
+        cursor.execute("DELETE FROM unified_fts WHERE chat_id = ?", (chat_id,))
+        
+        # Get chat title
+        cursor.execute("SELECT title FROM chats WHERE id = ?", (chat_id,))
+        row = cursor.fetchone()
+        if not row:
+            return
+        title = row[0] or ""
+        
+        # Get all message text
+        cursor.execute("""
+            SELECT GROUP_CONCAT(text, ' ')
+            FROM messages
+            WHERE chat_id = ?
+        """, (chat_id,))
+        message_text = cursor.fetchone()[0] or ""
+        
+        # Get tags
+        cursor.execute("""
+            SELECT GROUP_CONCAT(tag, ' ')
+            FROM tags
+            WHERE chat_id = ?
+        """, (chat_id,))
+        tags = cursor.fetchone()[0] or ""
+        
+        # Get files
+        cursor.execute("""
+            SELECT GROUP_CONCAT(path, ' ')
+            FROM chat_files
+            WHERE chat_id = ?
+        """, (chat_id,))
+        files = cursor.fetchone()[0] or ""
+        
+        # Insert updated entry
+        cursor.execute("""
+            INSERT INTO unified_fts (chat_id, content_type, title, message_text, tags, files)
+            VALUES (?, 'chat', ?, ?, ?, ?)
+        """, (chat_id, title, message_text, tags, files))
+        
+        self.conn.commit()
+    
+    def instant_search(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """
+        Fast instant search for typeahead/live search.
+        
+        Searches across chat titles, messages, tags, and files.
+        Returns results with highlighted snippets.
+        
+        Parameters
+        ----
+        query : str
+            Search query (automatically handles prefix matching)
+        limit : int
+            Maximum results to return
+            
+        Returns
+        ----
+        List[Dict[str, Any]]
+            Search results with snippets and highlights
+        """
+        cursor = self.conn.cursor()
+        
+        # Clean the query and add prefix matching for each term
+        # This enables search-as-you-type behavior
+        terms = query.strip().split()
+        if not terms:
+            return []
+        
+        # Build FTS5 query with prefix matching on last term
+        # e.g., "hello wor" -> 'hello wor*'
+        fts_query = ' '.join(terms[:-1] + [terms[-1] + '*']) if terms else ''
+        
+        try:
+            # Search with snippet generation
+            # snippet() function: table, column_idx, start_mark, end_mark, ellipsis, max_tokens
+            cursor.execute("""
+                SELECT 
+                    fts.chat_id,
+                    c.cursor_composer_id,
+                    c.title,
+                    c.mode,
+                    c.created_at,
+                    c.source,
+                    c.messages_count,
+                    w.workspace_hash,
+                    w.resolved_path,
+                    snippet(unified_fts, 3, '<mark>', '</mark>', '...', 32) as snippet,
+                    bm25(unified_fts) as rank
+                FROM unified_fts fts
+                INNER JOIN chats c ON fts.chat_id = c.id
+                LEFT JOIN workspaces w ON c.workspace_id = w.id
+                WHERE unified_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+            """, (fts_query, limit))
+            
+            results = []
+            chat_ids = []
+            for row in cursor.fetchall():
+                chat_id = row[0]
+                chat_ids.append(chat_id)
+                results.append({
+                    "id": chat_id,
+                    "composer_id": row[1],
+                    "title": row[2] or "Untitled Chat",
+                    "mode": row[3],
+                    "created_at": row[4],
+                    "source": row[5],
+                    "messages_count": row[6] or 0,
+                    "workspace_hash": row[7],
+                    "workspace_path": row[8],
+                    "snippet": row[9],  # Highlighted snippet
+                    "rank": row[10],
+                    "tags": [],
+                })
+            
+            # Batch load tags
+            if chat_ids:
+                placeholders = ','.join(['?'] * len(chat_ids))
+                cursor.execute(f"""
+                    SELECT chat_id, tag FROM tags 
+                    WHERE chat_id IN ({placeholders})
+                    ORDER BY chat_id, tag
+                """, chat_ids)
+                
+                tags_by_chat = {}
+                for row in cursor.fetchall():
+                    chat_id, tag = row
+                    if chat_id not in tags_by_chat:
+                        tags_by_chat[chat_id] = []
+                    tags_by_chat[chat_id].append(tag)
+                
+                for result in results:
+                    result["tags"] = tags_by_chat.get(result["id"], [])
+            
+            return results
+            
+        except sqlite3.OperationalError as e:
+            # Handle malformed FTS queries gracefully
+            logger.debug("FTS query error for '%s': %s", query, e)
+            return []
+    
+    def search_with_snippets(self, query: str, limit: int = 50, offset: int = 0) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Full search with snippets, pagination, and total count.
+        
+        Parameters
+        ----
+        query : str
+            Search query
+        limit : int
+            Maximum results per page
+        offset : int
+            Pagination offset
+            
+        Returns
+        ----
+        Tuple[List[Dict], int]
+            (results with snippets, total count)
+        """
+        cursor = self.conn.cursor()
+        
+        terms = query.strip().split()
+        if not terms:
+            return [], 0
+        
+        # Add prefix matching to last term
+        fts_query = ' '.join(terms[:-1] + [terms[-1] + '*']) if terms else ''
+        
+        try:
+            # Get total count first
+            cursor.execute("""
+                SELECT COUNT(DISTINCT chat_id)
+                FROM unified_fts
+                WHERE unified_fts MATCH ?
+            """, (fts_query,))
+            total = cursor.fetchone()[0]
+            
+            # Get results with snippets
+            cursor.execute("""
+                SELECT 
+                    fts.chat_id,
+                    c.cursor_composer_id,
+                    c.title,
+                    c.mode,
+                    c.created_at,
+                    c.source,
+                    c.messages_count,
+                    w.workspace_hash,
+                    w.resolved_path,
+                    snippet(unified_fts, 3, '<mark>', '</mark>', '...', 64) as snippet,
+                    bm25(unified_fts) as rank
+                FROM unified_fts fts
+                INNER JOIN chats c ON fts.chat_id = c.id
+                LEFT JOIN workspaces w ON c.workspace_id = w.id
+                WHERE unified_fts MATCH ?
+                ORDER BY rank
+                LIMIT ? OFFSET ?
+            """, (fts_query, limit, offset))
+            
+            results = []
+            chat_ids = []
+            for row in cursor.fetchall():
+                chat_id = row[0]
+                chat_ids.append(chat_id)
+                results.append({
+                    "id": chat_id,
+                    "composer_id": row[1],
+                    "title": row[2] or "Untitled Chat",
+                    "mode": row[3],
+                    "created_at": row[4],
+                    "source": row[5],
+                    "messages_count": row[6] or 0,
+                    "workspace_hash": row[7],
+                    "workspace_path": row[8],
+                    "snippet": row[9],
+                    "rank": row[10],
+                    "tags": [],
+                })
+            
+            # Batch load tags
+            if chat_ids:
+                placeholders = ','.join(['?'] * len(chat_ids))
+                cursor.execute(f"""
+                    SELECT chat_id, tag FROM tags 
+                    WHERE chat_id IN ({placeholders})
+                    ORDER BY chat_id, tag
+                """, chat_ids)
+                
+                tags_by_chat = {}
+                for row in cursor.fetchall():
+                    chat_id, tag = row
+                    if chat_id not in tags_by_chat:
+                        tags_by_chat[chat_id] = []
+                    tags_by_chat[chat_id].append(tag)
+                
+                for result in results:
+                    result["tags"] = tags_by_chat.get(result["id"], [])
+            
+            return results, total
+            
+        except sqlite3.OperationalError as e:
+            logger.debug("FTS query error for '%s': %s", query, e)
+            return [], 0
+    
+    def rebuild_search_index(self):
+        """
+        Public method to rebuild the unified search index.
+        
+        Call this after bulk imports or if search seems inconsistent.
+        """
+        logger.info("Starting unified FTS index rebuild...")
+        self._rebuild_unified_fts()
+        logger.info("Unified FTS index rebuild complete")
 
