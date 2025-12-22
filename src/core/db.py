@@ -475,9 +475,10 @@ class ChatDatabase:
         
         return chat_data
     
-    def count_chats(self, workspace_id: Optional[int] = None, empty_filter: Optional[str] = None) -> int:
+    def count_chats(self, workspace_id: Optional[int] = None, empty_filter: Optional[str] = None,
+                    tags_filter: Optional[List[str]] = None) -> int:
         """
-        Count total chats, optionally filtered by workspace and empty status.
+        Count total chats, optionally filtered by workspace, empty status, and tags.
         
         Parameters
         ----
@@ -485,6 +486,9 @@ class ChatDatabase:
             Filter by workspace
         empty_filter : str, optional
             Filter by empty status: 'empty' (messages_count = 0), 'non_empty' (messages_count > 0), or None (all)
+        tags_filter : List[str], optional
+            Filter by tags. Chats must have at least one of the specified tags.
+            Supports SQL LIKE wildcards (e.g., "tech/%" for all tech tags).
             
         Returns
         ----
@@ -497,15 +501,36 @@ class ChatDatabase:
         params = []
         
         if workspace_id:
-            conditions.append("workspace_id = ?")
+            conditions.append("c.workspace_id = ?")
             params.append(workspace_id)
         
         if empty_filter == 'empty':
-            conditions.append("messages_count = 0")
+            conditions.append("c.messages_count = 0")
         elif empty_filter == 'non_empty':
-            conditions.append("messages_count > 0")
+            conditions.append("c.messages_count > 0")
         
-        query = "SELECT COUNT(*) FROM chats"
+        # Build tag filter subquery
+        tag_join = ""
+        if tags_filter:
+            # Create subquery to find chats with matching tags
+            tag_conditions = []
+            for tag in tags_filter:
+                if '%' in tag or '_' in tag:
+                    # LIKE pattern
+                    tag_conditions.append("t.tag LIKE ?")
+                else:
+                    # Exact match
+                    tag_conditions.append("t.tag = ?")
+                params.append(tag)
+            
+            tag_join = f"""
+                INNER JOIN (
+                    SELECT DISTINCT chat_id FROM tags t
+                    WHERE {' OR '.join(tag_conditions)}
+                ) tag_filter ON c.id = tag_filter.chat_id
+            """
+        
+        query = f"SELECT COUNT(*) FROM chats c {tag_join}"
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
         
@@ -538,7 +563,8 @@ class ChatDatabase:
         return cursor.fetchone()[0]
     
     def list_chats(self, workspace_id: Optional[int] = None, limit: int = 100, offset: int = 0, 
-                   empty_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+                   empty_filter: Optional[str] = None,
+                   tags_filter: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """
         List chats with optional filtering.
         
@@ -552,6 +578,9 @@ class ChatDatabase:
             Offset for pagination
         empty_filter : str, optional
             Filter by empty status: 'empty' (messages_count = 0), 'non_empty' (messages_count > 0), or None (all)
+        tags_filter : List[str], optional
+            Filter by tags. Chats must have at least one of the specified tags.
+            Supports SQL LIKE wildcards (e.g., "tech/%" for all tech tags).
             
         Returns
         ----
@@ -572,6 +601,27 @@ class ChatDatabase:
         elif empty_filter == 'non_empty':
             conditions.append("c.messages_count > 0")
         
+        # Build tag filter subquery
+        tag_join = ""
+        if tags_filter:
+            # Create subquery to find chats with matching tags
+            tag_conditions = []
+            for tag in tags_filter:
+                if '%' in tag or '_' in tag:
+                    # LIKE pattern
+                    tag_conditions.append("t.tag LIKE ?")
+                else:
+                    # Exact match
+                    tag_conditions.append("t.tag = ?")
+                params.append(tag)
+            
+            tag_join = f"""
+                INNER JOIN (
+                    SELECT DISTINCT chat_id FROM tags t
+                    WHERE {' OR '.join(tag_conditions)}
+                ) tag_filter ON c.id = tag_filter.chat_id
+            """
+        
         where_clause = ""
         if conditions:
             where_clause = "WHERE " + " AND ".join(conditions)
@@ -581,6 +631,7 @@ class ChatDatabase:
                    w.workspace_hash, w.resolved_path
             FROM chats c
             LEFT JOIN workspaces w ON c.workspace_id = w.id
+            {tag_join}
             {where_clause}
             ORDER BY c.created_at DESC
             LIMIT ? OFFSET ?

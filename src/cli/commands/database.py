@@ -112,16 +112,39 @@ def import_legacy(ctx, path, pattern, db_path):
 
 
 @click.command()
-@click.argument('query')
+@click.argument('query', required=False)
 @click.option(
     '--limit',
     default=20,
     help='Maximum number of results'
 )
+@click.option(
+    '--tag', '-t',
+    multiple=True,
+    help='Filter by tag(s). Can be specified multiple times. Supports wildcards (e.g., "tech/%").'
+)
+@click.option(
+    '--list-tags',
+    is_flag=True,
+    help='List all available tags with counts'
+)
 @db_option
 @click.pass_context
-def search(ctx, query, limit, db_path):
-    """Search chats in local database."""
+def search(ctx, query, limit, tag, list_tags, db_path):
+    """Search chats in local database.
+    
+    Use QUERY for full-text search, or --tag to filter by tags.
+    
+    Examples:
+    
+      python -m src search "python error"     # Full-text search
+      
+      python -m src search --tag tech/python  # Filter by tag
+      
+      python -m src search --tag "tech/%"     # All tech tags (wildcard)
+      
+      python -m src search --list-tags        # Show all tags
+    """
     # Get database from context
     if db_path:
         ctx.obj.db_path = Path(db_path)
@@ -129,7 +152,67 @@ def search(ctx, query, limit, db_path):
     db = ctx.obj.get_db()
 
     try:
+        # List all tags mode
+        if list_tags:
+            all_tags = db.get_all_tags()
+            if all_tags:
+                click.secho("\nAll tags (by count):\n", fg='green')
+                
+                # Group by dimension
+                tech_tags = {t: c for t, c in all_tags.items() if t.startswith('tech/')}
+                activity_tags = {t: c for t, c in all_tags.items() if t.startswith('activity/')}
+                topic_tags = {t: c for t, c in all_tags.items() if t.startswith('topic/')}
+                other_tags = {t: c for t, c in all_tags.items() 
+                            if not t.startswith(('tech/', 'activity/', 'topic/'))}
+                
+                def print_section(title, tags_dict):
+                    if tags_dict:
+                        click.secho(f"  {title}:", fg='cyan')
+                        for tag_name, count in sorted(tags_dict.items(), key=lambda x: (-x[1], x[0])):
+                            click.echo(f"    {tag_name} ({count})")
+                        click.echo()
+                
+                print_section("Tech Tags", tech_tags)
+                print_section("Activity Tags", activity_tags)
+                print_section("Topic Tags", topic_tags)
+                print_section("Other Tags", other_tags)
+            else:
+                click.echo("No tags found. Run 'python -m src tag auto-tag-all' to auto-tag chats.")
+            return
+        
         search_service = ChatSearchService(db)
+        
+        # Tag filtering mode
+        if tag:
+            tags_list = list(tag)
+            results = search_service.list_chats(limit=limit, tags_filter=tags_list)
+            total = search_service.count_chats(tags_filter=tags_list)
+            
+            if not results:
+                click.echo(f"No chats found with tag(s): {', '.join(tags_list)}")
+                raise click.Abort()
+            
+            tag_desc = ', '.join(tags_list)
+            click.secho(f"\nFound {total} chats with tag(s) '{tag_desc}' (showing {len(results)}):\n", fg='green')
+            
+            for chat in results:
+                click.echo(f"Chat ID: {chat['id']}")
+                click.echo(f"  Title: {chat['title']}")
+                click.echo(f"  Mode: {chat['mode']}")
+                click.echo(f"  Created: {chat['created_at']}")
+                if chat.get('tags'):
+                    click.echo(f"  Tags: {', '.join(chat['tags'][:5])}")
+                if chat.get('workspace_path'):
+                    click.echo(f"  Workspace: {chat['workspace_path']}")
+                click.echo()
+            return
+        
+        # Full-text search mode
+        if not query:
+            click.echo("Please provide a search query or use --tag to filter by tags.")
+            click.echo("Use --list-tags to see available tags.")
+            raise click.Abort()
+        
         results = search_service.search(query, limit)
 
         if not results:
@@ -143,10 +226,14 @@ def search(ctx, query, limit, db_path):
             click.echo(f"  Title: {chat['title']}")
             click.echo(f"  Mode: {chat['mode']}")
             click.echo(f"  Created: {chat['created_at']}")
+            if chat.get('tags'):
+                click.echo(f"  Tags: {', '.join(chat['tags'][:5])}")
             if chat.get('workspace_path'):
                 click.echo(f"  Workspace: {chat['workspace_path']}")
             click.echo()
 
+    except click.Abort:
+        raise
     except Exception as e:
         click.secho(f"Error during search: {e}", fg='red', err=True)
         raise click.Abort()
