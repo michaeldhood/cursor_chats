@@ -341,7 +341,9 @@ class TestJournalCLI:
             '--from-file', str(template_file)
         ])
         
-        result = journal_command(args)
+        # Mock _save_template to prevent filesystem writes during test
+        with patch('src.journal.JournalGenerator._save_template'):
+            result = journal_command(args)
         
         assert result == 0
 
