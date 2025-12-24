@@ -155,12 +155,27 @@
 
 {% block content %}
 <div class="filter-controls">
-    <label for="filter">Filter:</label>
-    <select id="filter" onchange="window.location.href='{{ url_for('index') }}?filter=' + (this.value || '')">
+    <label for="filter">Status:</label>
+    <select id="filter" onchange="updateFilters()">
         <option value="" {% if not current_filter %}selected{% endif %}>All chats</option>
         <option value="empty" {% if current_filter == 'empty' %}selected{% endif %}>Empty only</option>
         <option value="non_empty" {% if current_filter == 'non_empty' %}selected{% endif %}>Non-empty only</option>
     </select>
+    
+    <label for="tag-filter" style="margin-left: 16px;">Tag:</label>
+    <select id="tag-filter" onchange="updateFilters()">
+        <option value="" {% if not current_tag %}selected{% endif %}>All tags</option>
+        {% if all_tags %}
+            {% for tag, count in all_tags.items()|sort(attribute='1', reverse=true) %}
+            <option value="{{ tag }}" {% if current_tag == tag %}selected{% endif %}>{{ tag }} ({{ count }})</option>
+            {% endfor %}
+        {% endif %}
+    </select>
+    
+    {% if current_tag %}
+    <a href="{{ url_for('index', filter=current_filter or '') }}" class="clear-tag" style="margin-left: 8px; color: var(--accent-orange); text-decoration: none; font-size: 13px;">✕ Clear tag</a>
+    {% endif %}
+    
     <span class="total-count">{{ total_chats }} chats</span>
 </div>
 
@@ -206,11 +221,11 @@
 {% if total_chats > 50 %}
 <div class="pagination">
     {% if page > 1 %}
-    <a href="{{ url_for('index', page=page-1, filter=current_filter or '') }}">← Previous</a>
+    <a href="{{ url_for('index', page=page-1, filter=current_filter or '', tag=current_tag or '') }}">← Previous</a>
     {% endif %}
     <a class="current">Page {{ page }}</a>
     {% if has_next %}
-    <a href="{{ url_for('index', page=page+1, filter=current_filter or '') }}">Next →</a>
+    <a href="{{ url_for('index', page=page+1, filter=current_filter or '', tag=current_tag or '') }}">Next →</a>
     {% endif %}
 </div>
 {% endif %}
@@ -218,8 +233,27 @@
 {% block extra_scripts %}
 <script>
     function filterByTag(tag) {
-        // For now, redirect to search with tag filter
-        window.location.href = '{{ url_for("search") }}?q=' + encodeURIComponent('tag:' + tag);
+        // Redirect to index with tag filter
+        const currentFilter = document.getElementById('filter').value;
+        let url = '{{ url_for("index") }}?tag=' + encodeURIComponent(tag);
+        if (currentFilter) {
+            url += '&filter=' + encodeURIComponent(currentFilter);
+        }
+        window.location.href = url;
+    }
+    
+    function updateFilters() {
+        const filter = document.getElementById('filter').value;
+        const tagFilter = document.getElementById('tag-filter').value;
+        let url = '{{ url_for("index") }}?';
+        const params = [];
+        if (filter) {
+            params.push('filter=' + encodeURIComponent(filter));
+        }
+        if (tagFilter) {
+            params.push('tag=' + encodeURIComponent(tagFilter));
+        }
+        window.location.href = url + params.join('&');
     }
 </script>
 {% endblock %}

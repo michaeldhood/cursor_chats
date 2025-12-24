@@ -47,9 +47,10 @@ class ChatSearchService:
     
     def list_chats(self, workspace_id: Optional[int] = None, 
                    limit: int = 100, offset: int = 0,
-                   empty_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+                   empty_filter: Optional[str] = None,
+                   tags_filter: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """
-        List chats with optional workspace and empty status filters.
+        List chats with optional workspace, empty status, and tag filters.
         
         Parameters
         ----
@@ -61,13 +62,16 @@ class ChatSearchService:
             Offset for pagination
         empty_filter : str, optional
             Filter by empty status: 'empty' (messages_count = 0), 'non_empty' (messages_count > 0), or None (all)
+        tags_filter : List[str], optional
+            Filter by tags. Chats must have at least one of the specified tags.
+            Supports SQL LIKE wildcards (e.g., "tech/%" for all tech tags).
             
         Returns
         ----
         List[Dict[str, Any]]
             List of chats
         """
-        return self.db.list_chats(workspace_id, limit, offset, empty_filter)
+        return self.db.list_chats(workspace_id, limit, offset, empty_filter, tags_filter)
     
     def get_chat(self, chat_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -85,9 +89,10 @@ class ChatSearchService:
         """
         return self.db.get_chat(chat_id)
     
-    def count_chats(self, workspace_id: Optional[int] = None, empty_filter: Optional[str] = None) -> int:
+    def count_chats(self, workspace_id: Optional[int] = None, empty_filter: Optional[str] = None,
+                    tags_filter: Optional[List[str]] = None) -> int:
         """
-        Count total chats, optionally filtered by workspace and empty status.
+        Count total chats, optionally filtered by workspace, empty status, and tags.
         
         Parameters
         ----
@@ -95,13 +100,15 @@ class ChatSearchService:
             Filter by workspace
         empty_filter : str, optional
             Filter by empty status: 'empty' (messages_count = 0), 'non_empty' (messages_count > 0), or None (all)
+        tags_filter : List[str], optional
+            Filter by tags. Chats must have at least one of the specified tags.
             
         Returns
         ----
         int
             Total count
         """
-        return self.db.count_chats(workspace_id, empty_filter)
+        return self.db.count_chats(workspace_id, empty_filter, tags_filter)
     
     def count_search(self, query: str) -> int:
         """

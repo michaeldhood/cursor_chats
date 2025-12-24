@@ -56,18 +56,30 @@ def index():
         limit = 50
         offset = (page - 1) * limit
         empty_filter = request.args.get('filter', None)  # 'empty', 'non_empty', or None
+        tag_filter = request.args.get('tag', None)  # Single tag or comma-separated tags
         
-        chats = search_service.list_chats(limit=limit, offset=offset, empty_filter=empty_filter)
+        # Parse tag filter
+        tags_filter = None
+        if tag_filter:
+            tags_filter = [t.strip() for t in tag_filter.split(',') if t.strip()]
+        
+        chats = search_service.list_chats(limit=limit, offset=offset, empty_filter=empty_filter, 
+                                          tags_filter=tags_filter)
         
         # Get total count using COUNT query with filter
-        total_chats = search_service.count_chats(empty_filter=empty_filter)
+        total_chats = search_service.count_chats(empty_filter=empty_filter, tags_filter=tags_filter)
+        
+        # Get all available tags for the filter dropdown
+        all_tags = db.get_all_tags()
         
         return render_template('index.html', 
                              chats=chats, 
                              page=page, 
                              total_chats=total_chats,
                              has_next=len(chats) == limit,
-                             current_filter=empty_filter)
+                             current_filter=empty_filter,
+                             current_tag=tag_filter,
+                             all_tags=all_tags)
     finally:
         db.close()
 
@@ -79,6 +91,12 @@ def search():
     
     if not query:
         return redirect(url_for('index'))
+    
+    # Check for tag: prefix in query
+    if query.startswith('tag:'):
+        # Extract tag and redirect to index with tag filter
+        tag = query[4:].strip()
+        return redirect(url_for('index', tag=tag))
     
     db = get_db()
     try:
@@ -164,14 +182,24 @@ def api_chats():
         limit = int(request.args.get('limit', 50))
         offset = (page - 1) * limit
         empty_filter = request.args.get('filter', None)
+        tag_filter = request.args.get('tag', None)
         
-        chats = search_service.list_chats(limit=limit, offset=offset, empty_filter=empty_filter)
+        # Parse tag filter
+        tags_filter = None
+        if tag_filter:
+            tags_filter = [t.strip() for t in tag_filter.split(',') if t.strip()]
+        
+        chats = search_service.list_chats(limit=limit, offset=offset, empty_filter=empty_filter,
+                                          tags_filter=tags_filter)
+        total_chats = search_service.count_chats(empty_filter=empty_filter, tags_filter=tags_filter)
         
         return jsonify({
             'chats': chats,
             'page': page,
             'limit': limit,
-            'filter': empty_filter
+            'filter': empty_filter,
+            'tag': tag_filter,
+            'total': total_chats
         })
     finally:
         db.close()
