@@ -205,7 +205,7 @@ def database_view():
 
 @app.route('/search')
 def search():
-    """Search page."""
+    """Search page with highlighted snippets."""
     query = request.args.get('q', '')
     
     if not query:
@@ -219,8 +219,8 @@ def search():
         limit = 50
         offset = (page - 1) * limit
         
-        results = search_service.search(query, limit=limit, offset=offset)
-        total_results = search_service.count_search(query)
+        # Use new search_with_total for snippets and count in one call
+        results, total_results = search_service.search_with_total(query, limit=limit, offset=offset)
         
         return render_template('search.html', 
                              query=query, 
@@ -324,13 +324,47 @@ def api_search():
         limit = int(request.args.get('limit', 50))
         offset = (page - 1) * limit
         
-        results = search_service.search(query, limit=limit, offset=offset)
+        results, total = search_service.search_with_total(query, limit=limit, offset=offset)
         
         return jsonify({
             'query': query,
             'results': results,
+            'total': total,
             'page': page,
             'limit': limit
+        })
+    finally:
+        db.close()
+
+
+@app.route('/api/instant-search')
+def api_instant_search():
+    """
+    Fast instant search API for typeahead/live search.
+    
+    Optimized for speed - returns within milliseconds.
+    Results include highlighted snippets showing match context.
+    
+    Query params:
+    - q: Search query (required)
+    - limit: Max results (default 10)
+    """
+    query = request.args.get('q', '').strip()
+    
+    if not query or len(query) < 2:
+        return jsonify({'query': query, 'results': []})
+    
+    db = get_db()
+    try:
+        search_service = ChatSearchService(db)
+        limit = min(int(request.args.get('limit', 10)), 50)  # Cap at 50
+        
+        results = search_service.instant_search(query, limit=limit)
+        
+        return jsonify({
+            'query': query,
+            'results': results,
+            'count': len(results)
         })
     finally:
         db.close()
