@@ -158,3 +158,4 @@ ALTER TABLE messages ADD COLUMN message_type TEXT DEFAULT 'response';
 
 
 
+
