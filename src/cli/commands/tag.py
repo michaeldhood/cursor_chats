@@ -131,95 +131,132 @@ def auto_tag_all(ctx, db_path):
     - Chat mode from chats.mode column
     - Content patterns from messages
     """
-    if db_path:
-        ctx.obj.db_path = Path(db_path)
+    try:
+        if db_path:
+            ctx.obj.db_path = Path(db_path)
 
-    db = ctx.obj.get_db()
-    tag_manager = TagManager(db=db)
+        db = ctx.obj.get_db()
+        tag_manager = TagManager(db=db)
 
-    # Get all chats
-    click.echo("Fetching all chats from database...")
-    all_chats = db.list_chats(limit=100000, offset=0)  # Get all chats
-    total_chats = len(all_chats)
+        # Get all chats
+        click.echo("Fetching all chats from database...")
+        all_chats = db.list_chats(limit=100000, offset=0)  # Get all chats
+        total_chats = len(all_chats)
 
-    if total_chats == 0:
-        click.echo("No chats found in database.")
-        return
+        if total_chats == 0:
+            click.echo("No chats found in database.")
+            return
 
-    click.echo(f"Found {total_chats} chats. Starting auto-tagging...")
+        click.echo(f"Found {total_chats} chats. Starting auto-tagging...")
 
-    tagged_count = 0
-    tags_added = 0
-    tag_distribution = {}
+        tagged_count = 0
+        tags_added = 0
+        tag_distribution = {}
 
-    for i, chat in enumerate(all_chats, 1):
-        chat_id = chat['id']
+        for i, chat in enumerate(all_chats, 1):
+            try:
+                chat_id = chat['id']
+                
+                # Ensure chat_id is an integer
+                if not isinstance(chat_id, int):
+                    if ctx.obj.verbose:
+                        click.echo(f"Warning: Chat has non-integer ID: {chat_id} (type: {type(chat_id)}), skipping", err=True)
+                    continue
 
-        # Skip if already has tags (optional - comment out to re-tag)
-        existing_tags = tag_manager.get_tags(chat_id)
-        if existing_tags:
-            if ctx.obj.verbose:
-                click.echo(f"Chat {chat_id} already has {len(existing_tags)} tags, skipping", err=True)
-            continue
+                # Skip if already has tags (optional - comment out to re-tag)
+                existing_tags = tag_manager.get_tags(chat_id)
+                if existing_tags:
+                    if ctx.obj.verbose:
+                        click.echo(f"Chat {chat_id} already has {len(existing_tags)} tags, skipping", err=True)
+                    continue
 
-        # Get chat metadata
-        chat_mode = chat.get('mode')
+                # Get chat metadata
+                chat_mode = chat.get('mode')
 
-        # Get file extensions
-        file_paths = db.get_chat_files(chat_id)
-        file_extensions = []
-        for path in file_paths:
-            if '.' in path:
-                ext = '.' + path.split('.')[-1]
-                file_extensions.append(ext)
+                # Get file extensions
+                file_paths = db.get_chat_files(chat_id)
+                file_extensions = []
+                for path in file_paths:
+                    if '.' in path:
+                        ext = '.' + path.split('.')[-1]
+                        file_extensions.append(ext)
 
-        # Get message content
-        chat_detail = db.get_chat(chat_id)
-        if not chat_detail:
-            continue
+                # Get message content
+                try:
+                    chat_detail = db.get_chat(chat_id)
+                except Exception as get_chat_e:
+                    raise
+                
+                if not chat_detail:
+                    continue
 
-        messages = chat_detail.get('messages', [])
-        content_parts = []
-        for msg in messages:
-            text = msg.get('text', '') or msg.get('rich_text', '')
-            if text:
-                content_parts.append(text)
+                try:
+                    messages = chat_detail.get('messages', [])
+                    content_parts = []
+                    for msg_idx, msg in enumerate(messages):
+                        text = msg.get('text', '') or msg.get('rich_text', '')
+                        if text:
+                            content_parts.append(text)
 
-        content = ' '.join(content_parts)
+                    content = ' '.join(content_parts)
+                except Exception as msg_e:
+                    raise
 
-        # Auto-tag
-        auto_tags = tag_manager.auto_tag(
-            content=content,
-            file_extensions=file_extensions if file_extensions else None,
-            chat_mode=chat_mode
-        )
+                # Auto-tag
+                try:
+                    auto_tags = tag_manager.auto_tag(
+                        content=content,
+                        file_extensions=file_extensions if file_extensions else None,
+                        chat_mode=chat_mode
+                    )
+                except Exception as auto_tag_e:
+                    raise
 
-        if auto_tags:
-            tag_manager.add_tags(chat_id, list(auto_tags))
-            tagged_count += 1
-            tags_added += len(auto_tags)
+                if auto_tags:
+                    # Use list comprehension instead of list() constructor
+                    # Workaround: Click appears to intercept list() constructor calls
+                    # when used with sets containing strings, causing argument parsing errors
+                    auto_tags_list = [tag for tag in auto_tags]
+                    
+                    tag_manager.add_tags(chat_id, auto_tags_list)
+                    tagged_count += 1
+                    tags_added += len(auto_tags)
 
-            # Track distribution
-            for tag in auto_tags:
-                tag_distribution[tag] = tag_distribution.get(tag, 0) + 1
+                    # Track distribution
+                    for tag in auto_tags:
+                        tag_distribution[tag] = tag_distribution.get(tag, 0) + 1
 
-            if ctx.obj.verbose:
-                click.echo(f"Chat {chat_id}: {', '.join(sorted(auto_tags))}", err=True)
+                    if ctx.obj.verbose:
+                        click.echo(f"Chat {chat_id}: {', '.join(sorted(auto_tags))}", err=True)
+            except Exception as e:
+                click.echo(f"Error processing chat {chat.get('id', 'unknown')}: {e}", err=True)
+                if ctx.obj.verbose:
+                    import traceback
+                    click.echo(traceback.format_exc(), err=True)
+                continue
 
-        # Progress update
-        if i % 100 == 0:
-            click.echo(f"Progress: {i}/{total_chats} chats processed...")
+            # Progress update
+            if i % 100 == 0:
+                click.echo(f"Progress: {i}/{total_chats} chats processed...")
 
-    # Summary
-    click.echo("\n" + "="*60)
-    click.secho("Auto-tagging complete!", fg='green')
-    click.echo(f"  Total chats processed: {total_chats}")
-    click.echo(f"  Chats tagged: {tagged_count}")
-    click.echo(f"  Total tags added: {tags_added}")
+        # Summary
+        click.echo("\n" + "="*60)
+        click.secho("Auto-tagging complete!", fg='green')
+        click.echo(f"  Total chats processed: {total_chats}")
+        click.echo(f"  Chats tagged: {tagged_count}")
+        click.echo(f"  Total tags added: {tags_added}")
 
-    if tag_distribution:
-        click.echo("\nTag distribution (top 20):")
-        sorted_tags = sorted(tag_distribution.items(), key=lambda x: -x[1])
-        for tag, count in sorted_tags[:20]:
-            click.echo(f"  {tag}: {count}")
+        if tag_distribution:
+            click.echo("\nTag distribution (top 20):")
+            sorted_tags = sorted(tag_distribution.items(), key=lambda x: -x[1])
+            for tag, count in sorted_tags[:20]:
+                click.echo(f"  {tag}: {count}")
+    except click.ClickException as e:
+        raise
+    except Exception as e:
+        import traceback
+        click.secho(f"Unexpected error: {e}", fg='red', err=True)
+        if ctx.obj.verbose:
+            click.echo(traceback.format_exc(), err=True)
+        raise click.Abort()
 
