@@ -27,6 +27,9 @@ chats.db
 **/cursor-chats/chats.db
 **/Application Support/cursor-chats/
 
+# Example files
+examples/
+
 # dlt secrets and pipeline state
 .dlt/secrets.toml
 .dlt/pipelines/
