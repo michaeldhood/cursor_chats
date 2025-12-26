@@ -4,6 +4,192 @@
 
 {% block extra_head %}
 <style>
+    /* Search layout with sidebar */
+    .search-layout {
+        display: grid;
+        grid-template-columns: 260px 1fr;
+        gap: 24px;
+    }
+    
+    @media (max-width: 900px) {
+        .search-layout {
+            grid-template-columns: 1fr;
+        }
+        .facets-sidebar {
+            order: -1;
+        }
+    }
+    
+    /* Facets sidebar */
+    .facets-sidebar {
+        position: sticky;
+        top: 20px;
+        height: fit-content;
+        max-height: calc(100vh - 120px);
+        overflow-y: auto;
+    }
+    
+    .facets-card {
+        background: var(--bg-secondary);
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
+        padding: 16px;
+    }
+    
+    .facets-card h3 {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--text-secondary);
+        margin-bottom: 12px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .facet-section {
+        margin-bottom: 16px;
+    }
+    
+    .facet-section:last-child {
+        margin-bottom: 0;
+    }
+    
+    .facet-section-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    
+    .facet-section-title .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+    }
+    
+    .facet-section-title .dot.tech { background: var(--accent-blue); }
+    .facet-section-title .dot.activity { background: var(--accent-green); }
+    .facet-section-title .dot.topic { background: var(--accent-purple); }
+    .facet-section-title .dot.other { background: var(--accent-orange); }
+    
+    .facet-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    
+    .facet-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: background 0.15s;
+    }
+    
+    .facet-item:hover {
+        background: var(--bg-hover);
+    }
+    
+    .facet-item.active {
+        background: rgba(86, 156, 214, 0.15);
+    }
+    
+    .facet-item input[type="checkbox"] {
+        width: 14px;
+        height: 14px;
+        accent-color: var(--accent-blue);
+        cursor: pointer;
+    }
+    
+    .facet-item label {
+        flex: 1;
+        font-size: 13px;
+        color: var(--text-primary);
+        cursor: pointer;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    
+    .facet-item .count {
+        font-size: 11px;
+        color: var(--text-muted);
+        background: var(--bg-tertiary);
+        padding: 2px 6px;
+        border-radius: 10px;
+    }
+    
+    .active-filters {
+        margin-bottom: 12px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .active-filters-title {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--accent-blue);
+        margin-bottom: 8px;
+    }
+    
+    .active-filter-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+    
+    .active-filter-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        padding: 4px 8px;
+        background: rgba(86, 156, 214, 0.2);
+        color: var(--accent-blue);
+        border-radius: 12px;
+        cursor: pointer;
+        transition: background 0.15s;
+    }
+    
+    .active-filter-tag:hover {
+        background: rgba(86, 156, 214, 0.35);
+    }
+    
+    .active-filter-tag .remove {
+        font-size: 14px;
+        line-height: 1;
+        opacity: 0.7;
+    }
+    
+    .clear-all-btn {
+        display: inline-block;
+        font-size: 11px;
+        color: var(--text-muted);
+        text-decoration: none;
+        margin-top: 8px;
+        padding: 4px 8px;
+        border-radius: 4px;
+        transition: all 0.15s;
+    }
+    
+    .clear-all-btn:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+    }
+    
+    /* Search content */
+    .search-content {
+        min-width: 0;
+    }
+    
     .search-header {
         background: var(--bg-secondary);
         padding: 24px;
@@ -105,68 +291,200 @@
     .chat-tags .tag {
         font-size: 11px;
         padding: 2px 8px;
-        background: rgba(78, 201, 176, 0.15);
-        color: var(--accent-green);
         border-radius: 12px;
+        cursor: pointer;
+        transition: background 0.15s;
+    }
+    
+    .chat-tags .tag.tech { background: rgba(86, 156, 214, 0.15); color: var(--accent-blue); }
+    .chat-tags .tag.activity { background: rgba(78, 201, 176, 0.15); color: var(--accent-green); }
+    .chat-tags .tag.topic { background: rgba(197, 134, 192, 0.15); color: var(--accent-purple); }
+    .chat-tags .tag.other { background: rgba(206, 145, 120, 0.15); color: var(--accent-orange); }
+    
+    .chat-tags .tag:hover {
+        filter: brightness(1.2);
+    }
+    
+    .no-facets {
+        font-size: 13px;
+        color: var(--text-muted);
+        text-align: center;
+        padding: 20px;
     }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="search-header">
-    <h2>Search Results for <span class="query">"{{ query }}"</span></h2>
-    {% if total_results is defined %}
-    <p class="result-count">Found {{ total_results }} result{{ 's' if total_results != 1 else '' }}</p>
-    {% endif %}
-</div>
-
-<div class="chat-list">
-    {% if results %}
-        {% for chat in results %}
-        <div class="chat-item">
-            <h3><a href="{{ url_for('chat_detail', chat_id=chat.id) }}">{{ chat.title or 'Untitled Chat' }}</a></h3>
-            {% if chat.snippet %}
-            <div class="search-snippet">{{ chat.snippet | safe }}</div>
+<div class="search-layout">
+    <!-- Facets Sidebar -->
+    <aside class="facets-sidebar">
+        <div class="facets-card">
+            <h3>Filter by Tag</h3>
+            
+            {% if active_filters %}
+            <div class="active-filters">
+                <div class="active-filters-title">Active Filters</div>
+                <div class="active-filter-tags">
+                    {% for tag in active_filters %}
+                    <span class="active-filter-tag" onclick="removeFilter('{{ tag }}')">
+                        {{ tag.split('/')[-1] if '/' in tag else tag }}
+                        <span class="remove">×</span>
+                    </span>
+                    {% endfor %}
+                </div>
+                <a href="{{ url_for('search', q=query) }}" class="clear-all-btn">Clear all filters</a>
+            </div>
             {% endif %}
-            <div class="chat-meta">
-                <span class="badge {{ chat.mode }}">{{ chat.mode }}</span>
-                <span class="source-badge {% if chat.source == 'claude.ai' %}claude{% else %}cursor{% endif %}">
-                    {{ chat.source or 'cursor' }}
-                </span>
-                <span class="messages-count {% if (chat.messages_count or 0) == 0 %}empty{% else %}non-empty{% endif %}">
-                    {{ chat.messages_count or 0 }} message{{ 's' if (chat.messages_count or 0) != 1 else '' }}
-                </span>
-                <span>{{ chat.created_at[:10] if chat.created_at else 'Unknown' }}</span>
-                {% if chat.workspace_path %}
-                <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; opacity: 0.7;">{{ chat.workspace_path }}</span>
+            
+            {% set has_facets = tag_facets and (tag_facets.tech or tag_facets.activity or tag_facets.topic or tag_facets.other) %}
+            
+            {% if has_facets %}
+                {% macro render_facet_section(title, facets, dimension) %}
+                {% if facets %}
+                <div class="facet-section">
+                    <div class="facet-section-title">
+                        <span class="dot {{ dimension }}"></span>
+                        {{ title }}
+                    </div>
+                    <div class="facet-list">
+                        {% for tag, count in facets.items()|sort(attribute='1', reverse=true) %}
+                        {% if loop.index <= 8 %}
+                        <div class="facet-item {% if tag in active_filters %}active{% endif %}" onclick="toggleFilter('{{ tag }}')">
+                            <input type="checkbox" id="facet-{{ tag|replace('/', '-') }}" 
+                                   {% if tag in active_filters %}checked{% endif %}
+                                   onchange="toggleFilter('{{ tag }}')">
+                            <label for="facet-{{ tag|replace('/', '-') }}">{{ tag.split('/')[-1] if '/' in tag else tag }}</label>
+                            <span class="count">{{ count }}</span>
+                        </div>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                </div>
                 {% endif %}
-            </div>
-            {% if chat.tags %}
-            <div class="chat-tags">
-                {% for tag in chat.tags %}
-                <span class="tag">{{ tag }}</span>
-                {% endfor %}
-            </div>
+                {% endmacro %}
+                
+                {{ render_facet_section('Tech', tag_facets.tech, 'tech') }}
+                {{ render_facet_section('Activity', tag_facets.activity, 'activity') }}
+                {{ render_facet_section('Topic', tag_facets.topic, 'topic') }}
+                {{ render_facet_section('Other', tag_facets.other, 'other') }}
+            {% else %}
+                <div class="no-facets">
+                    No tags found for these results.<br>
+                    <span style="font-size: 11px; opacity: 0.7;">Run <code>python -m src tag auto-tag-all</code> to tag chats.</span>
+                </div>
             {% endif %}
         </div>
-        {% endfor %}
-    {% else %}
-        <div class="empty-state">
-            <p>No results found for <span class="query">"{{ query }}"</span></p>
-            <p style="margin-top: 12px; font-size: 13px;">Try searching for different terms, or use prefix matching (e.g., "react" will also find "reactive")</p>
+    </aside>
+    
+    <!-- Search Results -->
+    <div class="search-content">
+        <div class="search-header">
+            <h2>Search Results for <span class="query">"{{ query }}"</span></h2>
+            {% if total_results is defined %}
+            <p class="result-count">
+                Found {{ total_results }} result{{ 's' if total_results != 1 else '' }}
+                {% if active_filters %}
+                <span style="opacity: 0.7;">with {{ active_filters|length }} filter{{ 's' if active_filters|length != 1 else '' }} applied</span>
+                {% endif %}
+            </p>
+            {% endif %}
         </div>
-    {% endif %}
+
+        <div class="chat-list">
+            {% if results %}
+                {% for chat in results %}
+                <div class="chat-item">
+                    <h3><a href="{{ url_for('chat_detail', chat_id=chat.id) }}">{{ chat.title or 'Untitled Chat' }}</a></h3>
+                    {% if chat.snippet %}
+                    <div class="search-snippet">{{ chat.snippet | safe }}</div>
+                    {% endif %}
+                    <div class="chat-meta">
+                        <span class="badge {{ chat.mode }}">{{ chat.mode }}</span>
+                        <span class="source-badge {% if chat.source == 'claude.ai' %}claude{% else %}cursor{% endif %}">
+                            {{ chat.source or 'cursor' }}
+                        </span>
+                        <span class="messages-count {% if (chat.messages_count or 0) == 0 %}empty{% else %}non-empty{% endif %}">
+                            {{ chat.messages_count or 0 }} message{{ 's' if (chat.messages_count or 0) != 1 else '' }}
+                        </span>
+                        <span>{{ chat.created_at[:10] if chat.created_at else 'Unknown' }}</span>
+                        {% if chat.workspace_path %}
+                        <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; opacity: 0.7;">{{ chat.workspace_path }}</span>
+                        {% endif %}
+                    </div>
+                    {% if chat.tags %}
+                    <div class="chat-tags">
+                        {% for tag in chat.tags %}
+                        {% set dimension = tag.split('/')[0] if '/' in tag else 'other' %}
+                        <span class="tag {{ dimension }}" onclick="toggleFilter('{{ tag }}')">{{ tag }}</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty-state">
+                    <p>No results found for <span class="query">"{{ query }}"</span>
+                    {% if active_filters %}with the selected filters{% endif %}</p>
+                    {% if active_filters %}
+                    <p style="margin-top: 12px; font-size: 13px;">
+                        <a href="{{ url_for('search', q=query) }}" style="color: var(--accent-blue);">Clear all filters</a> to see more results.
+                    </p>
+                    {% else %}
+                    <p style="margin-top: 12px; font-size: 13px;">Try searching for different terms, or use prefix matching (e.g., "react" will also find "reactive")</p>
+                    {% endif %}
+                </div>
+            {% endif %}
+        </div>
+
+        {% if has_next or page > 1 %}
+        <div class="pagination">
+            {% set filter_params = '&tags=' + active_filters|join('&tags=') if active_filters else '' %}
+            {% if page > 1 %}
+            <a href="{{ url_for('search', q=query, page=page-1) }}{{ filter_params }}">← Previous</a>
+            {% endif %}
+            <a class="current">Page {{ page }}</a>
+            {% if has_next %}
+            <a href="{{ url_for('search', q=query, page=page+1) }}{{ filter_params }}">Next →</a>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
 </div>
 
-{% if has_next or page > 1 %}
-<div class="pagination">
-    {% if page > 1 %}
-    <a href="{{ url_for('search', q=query, page=page-1) }}">← Previous</a>
-    {% endif %}
-    <a class="current">Page {{ page }}</a>
-    {% if has_next %}
-    <a href="{{ url_for('search', q=query, page=page+1) }}">Next →</a>
-    {% endif %}
-</div>
-{% endif %}
+<script>
+    // Current active filters
+    const activeFilters = {{ active_filters | tojson | safe }};
+    const currentQuery = {{ query | tojson | safe }};
+    
+    function toggleFilter(tag) {
+        const newFilters = [...activeFilters];
+        const index = newFilters.indexOf(tag);
+        
+        if (index === -1) {
+            // Add filter
+            newFilters.push(tag);
+        } else {
+            // Remove filter
+            newFilters.splice(index, 1);
+        }
+        
+        applyFilters(newFilters);
+    }
+    
+    function removeFilter(tag) {
+        const newFilters = activeFilters.filter(t => t !== tag);
+        applyFilters(newFilters);
+    }
+    
+    function applyFilters(filters) {
+        const params = new URLSearchParams();
+        params.set('q', currentQuery);
+        
+        filters.forEach(tag => {
+            params.append('tags', tag);
+        });
+        
+        window.location.href = '{{ url_for("search") }}?' + params.toString();
+    }
+</script>
 {% endblock %}

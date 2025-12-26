@@ -1266,6 +1266,208 @@ class ChatDatabase:
             logger.debug("FTS query error for '%s': %s", query, e)
             return [], 0
     
+    def get_search_tag_facets(
+        self, query: str, tag_filters: Optional[List[str]] = None
+    ) -> Dict[str, int]:
+        """
+        Get tag facet counts for search results.
+        
+        Returns counts of all tags across ALL matching chats (not just current page),
+        useful for building filter UI sidebars.
+        
+        Parameters
+        ----
+        query : str
+            Search query
+        tag_filters : List[str], optional
+            If provided, only count tags for chats that have ALL these tags
+            
+        Returns
+        ----
+        Dict[str, int]
+            Mapping of tag -> count of chats with that tag
+        """
+        cursor = self.conn.cursor()
+        
+        terms = query.strip().split()
+        if not terms:
+            return {}
+        
+        # Add prefix matching to last term
+        fts_query = ' '.join(terms[:-1] + [terms[-1] + '*']) if terms else ''
+        
+        try:
+            if tag_filters:
+                # Get chat IDs matching both FTS query AND all tag filters
+                placeholders = ','.join(['?'] * len(tag_filters))
+                cursor.execute(f"""
+                    SELECT DISTINCT fts.chat_id
+                    FROM unified_fts fts
+                    INNER JOIN tags t ON fts.chat_id = t.chat_id
+                    WHERE unified_fts MATCH ?
+                    AND t.tag IN ({placeholders})
+                    GROUP BY fts.chat_id
+                    HAVING COUNT(DISTINCT t.tag) = ?
+                """, (fts_query, *tag_filters, len(tag_filters)))
+            else:
+                cursor.execute("""
+                    SELECT DISTINCT chat_id
+                    FROM unified_fts
+                    WHERE unified_fts MATCH ?
+                """, (fts_query,))
+            
+            matching_chat_ids = [row[0] for row in cursor.fetchall()]
+            
+            if not matching_chat_ids:
+                return {}
+            
+            # Get tag counts for matching chats
+            placeholders = ','.join(['?'] * len(matching_chat_ids))
+            cursor.execute(f"""
+                SELECT tag, COUNT(*) as cnt
+                FROM tags
+                WHERE chat_id IN ({placeholders})
+                GROUP BY tag
+                ORDER BY cnt DESC, tag ASC
+            """, matching_chat_ids)
+            
+            return {row[0]: row[1] for row in cursor.fetchall()}
+            
+        except sqlite3.OperationalError as e:
+            logger.debug("FTS facet query error for '%s': %s", query, e)
+            return {}
+    
+    def search_with_snippets_filtered(
+        self, 
+        query: str, 
+        tag_filters: Optional[List[str]] = None,
+        limit: int = 50, 
+        offset: int = 0
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Full search with snippets, pagination, and tag filtering.
+        
+        Parameters
+        ----
+        query : str
+            Search query
+        tag_filters : List[str], optional
+            Only return chats that have ALL of these tags
+        limit : int
+            Maximum results per page
+        offset : int
+            Pagination offset
+            
+        Returns
+        ----
+        Tuple[List[Dict], int]
+            (results with snippets, total count)
+        """
+        if not tag_filters:
+            # No filters, use existing method
+            return self.search_with_snippets(query, limit, offset)
+        
+        cursor = self.conn.cursor()
+        
+        terms = query.strip().split()
+        if not terms:
+            return [], 0
+        
+        # Add prefix matching to last term
+        fts_query = ' '.join(terms[:-1] + [terms[-1] + '*']) if terms else ''
+        
+        try:
+            # Build tag filter using subquery approach
+            # Find chats that have ALL specified tags
+            tag_placeholders = ','.join(['?'] * len(tag_filters))
+            
+            # Subquery to get chat_ids that have all required tags
+            tag_subquery = f"""
+                SELECT chat_id 
+                FROM tags 
+                WHERE tag IN ({tag_placeholders})
+                GROUP BY chat_id
+                HAVING COUNT(DISTINCT tag) = ?
+            """
+            
+            # Get total count first
+            cursor.execute(f"""
+                SELECT COUNT(DISTINCT fts.chat_id)
+                FROM unified_fts fts
+                WHERE unified_fts MATCH ?
+                AND fts.chat_id IN ({tag_subquery})
+            """, (fts_query, *tag_filters, len(tag_filters)))
+            
+            total = cursor.fetchone()[0]
+            
+            # Get results with snippets
+            cursor.execute(f"""
+                SELECT 
+                    fts.chat_id,
+                    c.cursor_composer_id,
+                    c.title,
+                    c.mode,
+                    c.created_at,
+                    c.source,
+                    c.messages_count,
+                    w.workspace_hash,
+                    w.resolved_path,
+                    snippet(unified_fts, 3, '<mark>', '</mark>', '...', 64) as snippet,
+                    bm25(unified_fts) as rank
+                FROM unified_fts fts
+                INNER JOIN chats c ON fts.chat_id = c.id
+                LEFT JOIN workspaces w ON c.workspace_id = w.id
+                WHERE unified_fts MATCH ?
+                AND fts.chat_id IN ({tag_subquery})
+                ORDER BY rank
+                LIMIT ? OFFSET ?
+            """, (fts_query, *tag_filters, len(tag_filters), limit, offset))
+            
+            results = []
+            chat_ids = []
+            for row in cursor.fetchall():
+                chat_id = row[0]
+                chat_ids.append(chat_id)
+                results.append({
+                    "id": chat_id,
+                    "composer_id": row[1],
+                    "title": row[2] or "Untitled Chat",
+                    "mode": row[3],
+                    "created_at": row[4],
+                    "source": row[5],
+                    "messages_count": row[6] or 0,
+                    "workspace_hash": row[7],
+                    "workspace_path": row[8],
+                    "snippet": row[9],
+                    "rank": row[10],
+                    "tags": [],
+                })
+            
+            # Batch load tags
+            if chat_ids:
+                placeholders = ','.join(['?'] * len(chat_ids))
+                cursor.execute(f"""
+                    SELECT chat_id, tag FROM tags 
+                    WHERE chat_id IN ({placeholders})
+                    ORDER BY chat_id, tag
+                """, chat_ids)
+                
+                tags_by_chat = {}
+                for row in cursor.fetchall():
+                    chat_id, tag = row
+                    if chat_id not in tags_by_chat:
+                        tags_by_chat[chat_id] = []
+                    tags_by_chat[chat_id].append(tag)
+                
+                for result in results:
+                    result["tags"] = tags_by_chat.get(result["id"], [])
+            
+            return results, total
+            
+        except sqlite3.OperationalError as e:
+            logger.debug("FTS filtered query error for '%s': %s", query, e)
+            return [], 0
+    
     def delete_empty_chats(self) -> int:
         """
         Delete all chats with messages_count = 0.

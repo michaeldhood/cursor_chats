@@ -99,6 +99,47 @@ class ChatSearchService:
         """
         return self.db.search_with_snippets(query, limit, offset)
     
+    def search_with_facets(
+        self, 
+        query: str, 
+        tag_filters: Optional[List[str]] = None,
+        limit: int = 50, 
+        offset: int = 0
+    ) -> Tuple[List[Dict[str, Any]], int, Dict[str, int]]:
+        """
+        Search with tag facets for building filter UI.
+        
+        Returns search results along with tag facet counts, allowing users
+        to progressively filter results by tag.
+        
+        Parameters
+        ----
+        query : str
+            Search query
+        tag_filters : List[str], optional
+            Only return chats that have ALL of these tags
+        limit : int
+            Results per page
+        offset : int
+            Pagination offset
+            
+        Returns
+        ----
+        Tuple[List[Dict], int, Dict[str, int]]
+            (results, total_count, tag_facets)
+            where tag_facets maps tag name to count of matching chats
+        """
+        # Get results (filtered if tags specified)
+        results, total = self.db.search_with_snippets_filtered(
+            query, tag_filters, limit, offset
+        )
+        
+        # Get facets (always show all available tags, even when filtering)
+        # This allows users to see what other filters are available
+        facets = self.db.get_search_tag_facets(query, tag_filters=None)
+        
+        return results, total, facets
+    
     def list_chats(self, workspace_id: Optional[int] = None, 
                    limit: int = 100, offset: int = 0,
                    empty_filter: Optional[str] = None) -> List[Dict[str, Any]]:

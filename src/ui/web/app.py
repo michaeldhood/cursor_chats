@@ -205,7 +205,7 @@ def database_view():
 
 @app.route('/search')
 def search():
-    """Search page with highlighted snippets."""
+    """Search page with highlighted snippets and tag facets."""
     query = request.args.get('q', '')
     
     if not query:
@@ -219,15 +219,45 @@ def search():
         limit = 50
         offset = (page - 1) * limit
         
-        # Use new search_with_total for snippets and count in one call
-        results, total_results = search_service.search_with_total(query, limit=limit, offset=offset)
+        # Get tag filters from query params (comma-separated or multiple params)
+        tag_filters = request.args.getlist('tags')
+        # Also support comma-separated format
+        if len(tag_filters) == 1 and ',' in tag_filters[0]:
+            tag_filters = [t.strip() for t in tag_filters[0].split(',') if t.strip()]
+        
+        # Use new search_with_facets for results, count, and tag facets
+        results, total_results, tag_facets = search_service.search_with_facets(
+            query, 
+            tag_filters=tag_filters if tag_filters else None,
+            limit=limit, 
+            offset=offset
+        )
+        
+        # Group facets by dimension for display
+        grouped_facets = {
+            'tech': {},
+            'activity': {},
+            'topic': {},
+            'other': {}
+        }
+        for tag, count in tag_facets.items():
+            if tag.startswith('tech/'):
+                grouped_facets['tech'][tag] = count
+            elif tag.startswith('activity/'):
+                grouped_facets['activity'][tag] = count
+            elif tag.startswith('topic/'):
+                grouped_facets['topic'][tag] = count
+            else:
+                grouped_facets['other'][tag] = count
         
         return render_template('search.html', 
                              query=query, 
                              results=results,
                              page=page,
                              total_results=total_results,
-                             has_next=len(results) == limit)
+                             has_next=len(results) == limit,
+                             tag_facets=grouped_facets,
+                             active_filters=tag_filters)
     finally:
         db.close()
 
