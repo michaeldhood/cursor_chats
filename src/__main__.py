@@ -1,8 +1,7 @@
 """
 Main entry point for running the package as a module.
 
-Uses the new Click-based CLI. The old argparse-based CLI in src/cli.py
-is deprecated and will be removed in a future version.
+Uses the Click-based CLI from src/cli/.
 """
 import sys
 

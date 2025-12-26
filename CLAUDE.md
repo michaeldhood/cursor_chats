@@ -41,7 +41,7 @@ python -m pytest tests/
 
 The codebase follows a modular architecture with clear separation of concerns:
 
-- **`src/cli.py`** - Command-line interface and argument parsing
+- **`src/cli/`** - Click-based command-line interface (modular architecture)
 - **`src/__main__.py`** - Entry point for `python -m src` execution
 - **`src/extractor.py`** - Cross-platform database extraction from Cursor's SQLite files
 - **`src/parser.py`** - Data processing and format conversion (JSON → CSV/Markdown)
