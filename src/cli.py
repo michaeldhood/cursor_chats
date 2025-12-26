@@ -791,13 +791,14 @@ def ingest_command(args: argparse.Namespace) -> int:
                 total_stats["errors"] += stats["errors"]
                 
             elif source == "claude":
-                logger.info("Ingesting chats from Claude.ai...")
+                mode_str = "incremental" if args.incremental else "full"
+                logger.info("Ingesting chats from Claude.ai (%s mode)...", mode_str)
                 
                 def claude_progress_callback(conv_id, total, current):
                     if current % 50 == 0 or current == total:
                         logger.info("Progress: %d/%d conversations processed...", current, total)
                 
-                stats = aggregator.ingest_claude(claude_progress_callback)
+                stats = aggregator.ingest_claude(claude_progress_callback, incremental=args.incremental)
                 
                 logger.info("\nClaude.ai ingestion complete!")
                 logger.info("  Ingested: %d chats", stats["ingested"])
@@ -858,7 +859,7 @@ def watch_command(args: argparse.Namespace) -> int:
                         logger.info("Auto-ingestion: %d ingested, %d skipped, %d errors",
                                    stats["ingested"], stats["skipped"], stats["errors"])
                     elif source == "claude":
-                        stats = aggregator.ingest_claude()
+                        stats = aggregator.ingest_claude(incremental=True)
                         logger.info("Auto-ingestion: %d ingested, %d skipped, %d errors",
                                    stats["ingested"], stats["skipped"], stats["errors"])
             except Exception as e:

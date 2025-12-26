@@ -763,6 +763,11 @@ class ChatAggregator:
                     stats["skipped"] += 1
                     continue
                 
+                # Skip empty chats (no messages)
+                if not chat.messages:
+                    stats["skipped"] += 1
+                    continue
+                
                 # Store in database
                 # Check if this is actually an update or a new chat
                 cursor = self.db.conn.cursor()
@@ -939,21 +944,47 @@ class ChatAggregator:
         
         return chat
     
-    def ingest_claude(self, progress_callback: Optional[callable] = None) -> Dict[str, int]:
+    def _parse_claude_timestamp(self, timestamp_str: Optional[str]) -> Optional[datetime]:
         """
-        Ingest chats from Claude.ai via dlt.
+        Parse Claude.ai timestamp string to datetime.
+        
+        Parameters
+        ----
+        timestamp_str : str, optional
+            ISO format timestamp string (may end with 'Z')
+            
+        Returns
+        ----
+        datetime, optional
+            Parsed datetime or None if parsing fails
+        """
+        if not timestamp_str:
+            return None
+        try:
+            if timestamp_str.endswith('Z'):
+                timestamp_str = timestamp_str[:-1] + '+00:00'
+            return datetime.fromisoformat(timestamp_str)
+        except (ValueError, TypeError):
+            return None
+    
+    def ingest_claude(self, progress_callback: Optional[callable] = None,
+                      incremental: bool = False) -> Dict[str, int]:
+        """
+        Ingest chats from Claude.ai.
         
         Parameters
         ----
         progress_callback : callable, optional
             Callback function(conversation_id, total, current) for progress updates
+        incremental : bool
+            If True, only fetch details for conversations that are new or updated
             
         Returns
         ----
         Dict[str, int]
             Statistics: {"ingested": count, "skipped": count, "errors": count}
         """
-        logger.info("Starting Claude.ai chat ingestion...")
+        logger.info("Starting Claude.ai chat ingestion%s...", " (incremental)" if incremental else "")
         
         try:
             claude_reader = ClaudeReader()
@@ -965,23 +996,70 @@ class ChatAggregator:
         stats = {"ingested": 0, "skipped": 0, "errors": 0}
         
         try:
-            # Get total count for progress (optional)
-            # Claude API doesn't provide a count endpoint, so we'll track as we go
-            conversations = list(claude_reader.read_all_conversations())
-            total = len(conversations)
-            logger.info("Found %d Claude conversations to process", total)
+            # Step 1: Get conversation list (1 API call)
+            conversation_list = claude_reader.get_conversation_list()
+            logger.info("Found %d Claude conversations", len(conversation_list))
             
-            # Process each conversation
-            for idx, conversation_data in enumerate(conversations, 1):
-                conv_id = conversation_data.get("uuid", f"unknown-{idx}")
+            # Step 2: Filter if incremental
+            conversations_to_fetch = []
+            if incremental:
+                for conv_meta in conversation_list:
+                    conv_id = conv_meta.get("uuid")
+                    if not conv_id:
+                        continue
+                    
+                    api_updated_at = self._parse_claude_timestamp(conv_meta.get("updated_at"))
+                    
+                    # Check if we have this conversation and when it was last updated
+                    db_chat = self.db.get_chat_by_composer_id(conv_id)
+                    
+                    if db_chat is None:
+                        # New conversation
+                        conversations_to_fetch.append(conv_meta)
+                    elif api_updated_at and db_chat.get("last_updated_at"):
+                        db_updated_at = datetime.fromisoformat(db_chat["last_updated_at"])
+                        if api_updated_at > db_updated_at:
+                            # Updated since we last stored it
+                            conversations_to_fetch.append(conv_meta)
+                        else:
+                            stats["skipped"] += 1
+                    else:
+                        # Can't compare timestamps, fetch to be safe
+                        conversations_to_fetch.append(conv_meta)
+                
+                logger.info("Incremental: %d new/updated, %d unchanged",
+                           len(conversations_to_fetch), stats["skipped"])
+            else:
+                conversations_to_fetch = conversation_list
+            
+            total = len(conversations_to_fetch)
+            logger.info("Processing %d conversations...", total)
+            
+            # Step 3: Fetch details only for filtered conversations
+            for idx, conv_meta in enumerate(conversations_to_fetch, 1):
+                conv_id = conv_meta.get("uuid", f"unknown-{idx}")
                 
                 if progress_callback and total:
                     progress_callback(conv_id, total, idx)
                 
                 try:
+                    # Fetch full conversation details
+                    full_conv = claude_reader._fetch_conversation_detail(conv_id)
+                    if not full_conv:
+                        stats["skipped"] += 1
+                        continue
+                    
+                    # Merge metadata with full details
+                    full_conv.update(conv_meta)
+                    
                     # Convert to domain model
-                    chat = self._convert_claude_to_chat(conversation_data)
+                    chat = self._convert_claude_to_chat(full_conv)
                     if not chat:
+                        stats["skipped"] += 1
+                        continue
+                    
+                    # Skip empty chats (no messages)
+                    if not chat.messages:
                         stats["skipped"] += 1
                         continue
                     

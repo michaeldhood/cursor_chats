@@ -6,7 +6,7 @@ Fetches conversations from Claude.ai's internal API using direct HTTP requests.
 
 import logging
 import os
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 import dlt  # Only used for reading secrets
 import requests
@@ -88,6 +88,17 @@ class ClaudeReader:
             return []
 
         return conversations
+    
+    def get_conversation_list(self) -> List[Dict[str, Any]]:
+        """
+        Fetch conversation metadata only (no details).
+        
+        Returns
+        ----
+        List[Dict[str, Any]]
+            List of conversation metadata objects with uuid, name, updated_at, etc.
+        """
+        return self._fetch_conversation_list()
 
     def _fetch_conversation_detail(self, conv_id: str) -> Optional[Dict[str, Any]]:
         """Fetch full conversation details including messages."""

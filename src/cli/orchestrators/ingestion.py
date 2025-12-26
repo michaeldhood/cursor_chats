@@ -94,7 +94,7 @@ class IngestionOrchestrator:
         if source == 'cursor':
             return self.aggregator.ingest_all(progress_callback, incremental=incremental)
         elif source == 'claude':
-            return self.aggregator.ingest_claude(progress_callback)
+            return self.aggregator.ingest_claude(progress_callback, incremental=incremental)
         else:
             return {"ingested": 0, "skipped": 0, "errors": 0}
 

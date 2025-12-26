@@ -814,6 +814,36 @@ class ChatDatabase:
         
         return [row[0] for row in cursor.fetchall()]
     
+    def get_chat_by_composer_id(self, composer_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a chat by its cursor_composer_id.
+        
+        Parameters
+        ----
+        composer_id : str
+            Composer/conversation ID to look up
+            
+        Returns
+        ----
+        Dict[str, Any], optional
+            Chat record with id, cursor_composer_id, last_updated_at, and source,
+            or None if not found
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT id, cursor_composer_id, last_updated_at, source
+            FROM chats WHERE cursor_composer_id = ?
+        """, (composer_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "cursor_composer_id": row[1],
+            "last_updated_at": row[2],
+            "source": row[3]
+        }
+    
     def get_last_updated_at(self) -> Optional[str]:
         """
         Get the most recent last_updated_at timestamp across all chats.
@@ -1235,6 +1265,22 @@ class ChatDatabase:
         except sqlite3.OperationalError as e:
             logger.debug("FTS query error for '%s': %s", query, e)
             return [], 0
+    
+    def delete_empty_chats(self) -> int:
+        """
+        Delete all chats with messages_count = 0.
+        
+        Returns
+        ----
+        int
+            Number of chats deleted
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("DELETE FROM chats WHERE messages_count = 0")
+        deleted = cursor.rowcount
+        self.conn.commit()
+        logger.info("Deleted %d empty chats", deleted)
+        return deleted
     
     def rebuild_search_index(self):
         """

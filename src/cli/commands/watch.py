@@ -22,8 +22,8 @@ from src.core.models import ChatMode
 @click.option(
     '--source',
     type=click.Choice(['cursor', 'claude', 'all']),
-    default='cursor',
-    help='Source to ingest from (default: cursor)'
+    default='all',
+    help='Source to ingest from (default: all)'
 )
 @click.option(
     '--poll-interval',
@@ -75,7 +75,7 @@ def watch(ctx, source, poll_interval, debounce, use_polling, db_path):
                         click.echo(f"Auto-ingestion: {stats['ingested']} ingested, "
                                  f"{stats['skipped']} skipped, {stats['errors']} errors")
                     elif source_name == "claude":
-                        stats = aggregator.ingest_claude()
+                        stats = aggregator.ingest_claude(incremental=True)
                         click.echo(f"Auto-ingestion: {stats['ingested']} ingested, "
                                  f"{stats['skipped']} skipped, {stats['errors']} errors")
             except Exception as e:

@@ -66,13 +66,14 @@ cli.add_command(extract)
 cli.add_command(convert)
 
 # Phase 4: Database commands
-from .commands.database import ingest, import_legacy, search, export, rebuild_index
+from .commands.database import ingest, import_legacy, search, export, rebuild_index, cleanup
 
 cli.add_command(ingest)
 cli.add_command(import_legacy)
 cli.add_command(search)
 cli.add_command(export)
 cli.add_command(rebuild_index)
+cli.add_command(cleanup)
 
 # Tag commands
 from .commands.tag import tag

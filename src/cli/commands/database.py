@@ -222,3 +222,43 @@ def export(ctx, format, output_dir, chat_id, db_path):
     except Exception as e:
         click.secho(f"Error during export: {e}", fg='red', err=True)
         raise click.Abort()
+
+
+@click.command()
+@db_option
+@click.option(
+    '--dry-run',
+    is_flag=True,
+    help='Show what would be deleted without actually deleting'
+)
+@click.pass_context
+def cleanup(ctx, db_path, dry_run):
+    """Remove empty chats (messages_count = 0) from database."""
+    # Get database from context
+    if db_path:
+        ctx.obj.db_path = Path(db_path)
+
+    db = ctx.obj.get_db()
+
+    try:
+        # Count empty chats first
+        cursor = db.conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM chats WHERE messages_count = 0")
+        count = cursor.fetchone()[0]
+
+        if count == 0:
+            click.echo("No empty chats found in database.")
+            return
+
+        if dry_run:
+            click.echo(f"Would delete {count} empty chat(s)")
+            click.echo("Run without --dry-run to actually delete them.")
+            return
+
+        # Actually delete
+        deleted = db.delete_empty_chats()
+        click.secho(f"Deleted {deleted} empty chat(s)", fg='green')
+
+    except Exception as e:
+        click.secho(f"Error during cleanup: {e}", fg='red', err=True)
+        raise click.Abort()
