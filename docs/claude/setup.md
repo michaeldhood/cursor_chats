@@ -159,6 +159,6 @@ Claude conversations are mapped to the unified chat database:
 
 ## Related Documentation
 
-- [Claude.ai Internal API Reference](claude-ai-internal-api-reference.md)
-- [Database Schema](db-schema.md)
+- [Claude.ai Internal API Reference](api-reference.md)
+- [Database Schema](../schema/aggregated-database.md)
 
